@@ -1,0 +1,13 @@
+# Environment variables
+.env
+venv/
+# Google Cloud credentials
+*.json
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# VSCode specific
+.vscode/
+
