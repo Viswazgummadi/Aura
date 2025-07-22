@@ -10,4 +10,5 @@ __pycache__/
 
 # VSCode specific
 .vscode/
-
+token.json
+credentials.json

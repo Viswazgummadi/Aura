@@ -5,7 +5,7 @@ from src.core import config
 # Configure the generative AI model with the API key
 try:
     genai.configure(api_key=config.GOOGLE_API_KEY)
-    model = genai.GenerativeModel('gemini-pro')
+    model = genai.GenerativeModel('gemini-1.5-flash')
     print("Gemini AI model configured successfully.")
 except Exception as e:
     print(f"Error configuring Gemini AI: {e}")
