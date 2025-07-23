@@ -1,30 +1,41 @@
-# In src/agent/core.py
-import google.generativeai as genai
-from src.core import config
+# File: src/agent/core.py (Simplified and Final)
 
-# Configure the generative AI model with the API key
-try:
-    genai.configure(api_key=config.GOOGLE_API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    print("Gemini AI model configured successfully.")
-except Exception as e:
-    print(f"Error configuring Gemini AI: {e}")
-    model = None
+from langchain_google_genai import ChatGoogleGenerativeAI
+from src.core import model_manager
 
-# This is a regular 'def' function, as it contains no 'await' calls.
-# The async magic happens in client.py with run_in_executor.
-def get_gemini_response(prompt: str) -> str:
+# --- Global Model Object ---
+model = None
+
+def create_llm_instance():
     """
-    Gets a response from the Gemini AI model for a given prompt.
-    This is a synchronous, blocking function.
+    Creates or reloads the global 'model' instance based on the active
+    configuration in models.json.
     """
-    if not model:
-        return "Sorry, the AI model is not configured correctly."
+    global model
     
+    print("--- Loading LLM instance ---")
+    
+    active_config = model_manager.get_active_config()
+    
+    if not active_config:
+        print("CRITICAL: No active model configuration found. Agent will not work.")
+        model = None
+        return
+
+    model_name = active_config["model_name"]
+    api_key = active_config["api_key"]
+
     try:
-        # This is a blocking network call
-        response = model.generate_content(prompt)
-        return response.text
+        # Instantiate the model without the problematic safety_settings
+        model = ChatGoogleGenerativeAI(
+            model=model_name,
+            google_api_key=api_key,
+            convert_system_message_to_human=True
+        )
+        print(f"✅ Successfully loaded model '{model_name}'.")
     except Exception as e:
-        print(f"An error occurred while generating AI response: {e}")
-        return "Sorry, I had trouble thinking of a response."
+        print(f"❌ Error configuring Gemini AI via LangChain: {e}")
+        model = None
+
+# --- Initial Load ---
+create_llm_instance()

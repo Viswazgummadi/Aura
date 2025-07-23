@@ -54,3 +54,32 @@ def update_event(event_id: str, summary: str, start_time_iso: str, end_time_iso:
     except Exception as e:
         print(f"An unexpected error occurred during event update: {e}")
         raise e
+def create_new_event(summary: str, start_time_iso: str, end_time_iso: str, description: str = None, location: str = None) -> dict | None:
+    """Creates a new event in the user's primary calendar."""
+    try:
+        # 1. Get an authorized calendar service object
+        service = build_google_service('calendar', 'v3')
+
+        # 2. Define the event body
+        event_body = {
+            'summary': summary,
+            'location': location,
+            'description': description,
+            'start': {'dateTime': start_time_iso, 'timeZone': 'UTC'},
+            'end': {'dateTime': end_time_iso, 'timeZone': 'UTC'},
+        }
+
+        # 3. Call the Calendar API to insert the new event
+        new_event = service.events().insert(
+            calendarId='primary', 
+            body=event_body
+        ).execute()
+        
+        print(f"Event created: {new_event.get('htmlLink')}")
+        return new_event
+    except HttpError as error:
+        print(f'An HttpError occurred during event creation: {error}')
+        raise error
+    except Exception as e:
+        print(f"An unexpected error occurred during event creation: {e}")
+        raise e

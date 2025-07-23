@@ -6,9 +6,12 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
+# File: src/core/gcp_auth.py
+
 SCOPES = [
     "https://www.googleapis.com/auth/calendar",
-    "https://www.googleapis.com/auth/gmail.readonly"
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify" # <-- NEW SCOPE for watch() API
 ]
 TOKEN_PATH = "token.json"
 CREDS_PATH = "credentials.json"
