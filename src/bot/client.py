@@ -11,7 +11,7 @@ from src.agent import invoker
 from src.bot import webserver
 from src.agent.tools import gmail as gmail_tool
 import gmail_history_tracker
-
+from gmail_history_tracker import GMAIL_PROCESSING_LOCK # <-- IMPORT THE LOCK
 
 class AuraBot(commands.Bot):
     def __init__(self):
@@ -26,14 +26,10 @@ class AuraBot(commands.Bot):
             if filename.endswith('.py') and not filename.startswith('__'):
                 try:
                     await self.load_extension(f'src.bot.cogs.{filename[:-3]}')
-                    print(f'  - Successfully loaded {filename}')
                 except Exception as e:
                     print(f'  - Failed to load {filename}: {e}')
         
-        print("Cogs loaded successfully.")
-
         webserver.run_webserver(self) 
-        print(f"Flask web server setup complete.")
 
     async def on_ready(self):
         print('------')
@@ -44,74 +40,56 @@ class AuraBot(commands.Bot):
         self.loop.create_task(self.run_initial_gmail_sync())
 
     async def run_initial_gmail_sync(self):
-        print("--- Initiating initial Gmail history sync as background task ---")
-        try:
-            # --- MODIFIED "FRESH START" LOGIC ---
-            last_tracker_history_id = gmail_history_tracker.get_last_history_id()
+        async with GMAIL_PROCESSING_LOCK: # <-- ACQUIRE THE LOCK
+            print("\n--- [LOCKED] Initiating initial Gmail sync ---")
+            try:
+                last_tracker_history_id = gmail_history_tracker.get_last_history_id()
 
-            # THIS IS THE CORE OF THE NEW "FRESH START" BEHAVIOR
-            if last_tracker_history_id is None:
-                print(">>> First-time setup detected. Performing a 'Fresh Start'.")
-                print(">>> All existing emails will be ignored. Notifications will begin for new emails from this point forward.")
-                
-                # 1. Get the current state of the mailbox without fetching any emails.
-                current_api_history_id = await self.loop.run_in_executor(None, gmail_tool.get_latest_history_id_from_gmail_api)
-                
-                # 2. Save this as our baseline.
-                gmail_history_tracker.set_last_history_id(current_api_history_id)
-                
-                # 3. Also grab the email address for future checks.
-                try:
+                if last_tracker_history_id is None:
+                    print("SYNC: First-time setup. Performing a 'Fresh Start'.")
+                    current_api_history_id = await self.loop.run_in_executor(None, gmail_tool.get_latest_history_id_from_gmail_api)
+                    gmail_history_tracker.set_last_history_id(current_api_history_id)
+                    
                     service = await self.loop.run_in_executor(None, gmail_tool.build_google_service, 'gmail', 'v1')
                     profile = await self.loop.run_in_executor(None, service.users().getProfile(userId='me').execute)
                     tracker_email_address = profile.get('emailAddress')
                     gmail_history_tracker.set_current_email_address(tracker_email_address)
-                    print(f">>> Baseline established. Tracker's historyId is set to {current_api_history_id} for {tracker_email_address}.")
-                except Exception as e:
-                    print(f"WARNING: Could not get email address for tracker during fresh start: {e}.")
-
-                print("--- Initial Gmail 'Fresh Start' sync complete ---")
-                return # We are done, exit the function.
-
-            # --- END MODIFIED LOGIC ---
-
-            # This code below will now only run on subsequent restarts, not the very first one.
-            print(">>> Existing history ID found. Syncing any messages received since last run...")
-            messages_to_process, new_history_id_to_save = await self.loop.run_in_executor(
-                None, gmail_tool.fetch_new_messages_for_processing_from_api, last_tracker_history_id
-            )
-
-            if messages_to_process:
-                print(f"DISCORD_BOT: Found {len(messages_to_process)} catch-up messages during startup sync. Notifying owner.")
-                owner = self.get_user(config.DISCORD_OWNER_ID)
-                if owner:
-                    for msg in messages_to_process:
-                        await owner.send(
-                            f"📧 Catch-up Mail: **{msg['subject']}** from **{msg['sender'].split('<')[0].strip()}**"
-                            f" (ID: `{msg['id']}`)"
-                        )
-                        await self.loop.run_in_executor(None, gmail_tool.mark_message_as_read, msg['id'])
-                        gmail_history_tracker.add_processed_message_id(msg['id'])
+                    print(f"SYNC: Baseline established for {tracker_email_address}.")
                     
-                    gmail_history_tracker.set_last_history_id(new_history_id_to_save)
-                    print(f"DISCORD_BOT: Initial sync history tracker updated to {new_history_id_to_save}")
+                    print("--- [UNLOCKED] Initial 'Fresh Start' sync complete ---\n")
+                    return
+
+                print("SYNC: Existing history found. Syncing messages since last run...")
+                messages_to_process, new_history_id_to_save = await self.loop.run_in_executor(
+                    None, gmail_tool.fetch_new_messages_for_processing_from_api, last_tracker_history_id
+                )
+
+                if messages_to_process:
+                    print(f"SYNC: Found {len(messages_to_process)} catch-up messages. Notifying owner.")
+                    owner = self.get_user(config.DISCORD_OWNER_ID)
+                    if owner:
+                        for msg in messages_to_process:
+                            await owner.send(
+                                f"📧 Catch-up Mail: **{msg['subject']}** from **{msg['sender'].split('<')[0].strip()}**"
+                            )
+                            await self.loop.run_in_executor(None, gmail_tool.mark_message_as_read, msg['id'])
+                            gmail_history_tracker.add_processed_message_id(msg['id'])
+                        
+                        gmail_history_tracker.set_last_history_id(new_history_id_to_save)
+                    else:
+                        print("SYNC WARNING: Owner not found, cannot send DMs.")
                 else:
-                    print("DISCORD_BOT WARNING: Owner user object not found, cannot send DMs for catch-up sync.")
-            else:
-                print("DISCORD_BOT: No new messages found during catch-up sync. Tracker is up to date.")
-                # We can still advance the history ID to the absolute latest, just in case.
-                current_api_history = gmail_tool.get_latest_history_id_from_gmail_api()
-                if current_api_history > (last_tracker_history_id or 0):
-                    gmail_history_tracker.set_last_history_id(current_api_history)
-                    print(f"DISCORD_BOT: History tracker advanced to current Gmail API history: {current_api_history}.")
+                    print("SYNC: No new messages found. Advancing history tracker.")
+                    current_api_history = await self.loop.run_in_executor(None, gmail_tool.get_latest_history_id_from_gmail_api)
+                    if current_api_history > (last_tracker_history_id or 0):
+                        gmail_history_tracker.set_last_history_id(current_api_history)
 
-        except Exception as e:
-            print(f"DISCORD_BOT ERROR during initial Gmail sync: {e}")
-            owner = self.get_user(config.DISCORD_OWNER_ID)
-            if owner:
-                await owner.send(f"❌ Error during initial Gmail sync: `{e}`. Subsequent mail notifications may be affected.")
-        print("--- Initial Gmail history sync complete ---")
-
+            except Exception as e:
+                print(f"SYNC ERROR: {e}")
+            
+            print("--- [UNLOCKED] Initial sync complete ---\n")
+    
+    # ... (rest of the file is the same)
     async def on_message(self, message: discord.Message):
         if message.author.bot:
             return
