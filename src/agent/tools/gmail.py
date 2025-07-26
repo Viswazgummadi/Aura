@@ -6,7 +6,6 @@ from datetime import datetime, timedelta, timezone
 from googleapiclient.errors import HttpError
 
 from src.core.gcp_auth import build_google_service # <-- Already imported
-import gmail_history_tracker # This file is still in the root, will address later if needed.
 
 # --- Public Tool Functions for Gmail ---
 
