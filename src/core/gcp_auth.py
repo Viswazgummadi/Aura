@@ -1,4 +1,3 @@
-# AIBuddies/src/core/gcp_auth.py
 import os.path
 import json
 from datetime import datetime, timedelta, timezone
@@ -37,47 +36,56 @@ def build_google_service(service_name: str, version: str, user_id: int):
         expiry_str_from_db = creds_data_from_db.get('expiry')
         print(f"TRACE_DT: User {user_id}: 'expiry' string from JSON: {expiry_str_from_db} (type: {type(expiry_str_from_db)})")
         
-        # >>>>> START OF NEW DEBUGGING BLOCK <<<<<
-        # Test datetime.fromisoformat with a hardcoded, identical string from the logs
-        # This will tell us if fromisoformat is fundamentally broken in this environment
-        test_iso_string = '2025-07-26T11:14:41.636811Z' # EXACT string from your previous logs
-        try:
-            test_dt = datetime.fromisoformat(test_iso_string)
-            print(f"TRACE_DT: User {user_id}: Isolated test: '{test_iso_string}' PARSED SUCCESSFULLY: {test_dt} (tzinfo: {test_dt.tzinfo}, id_tzinfo: {id(test_dt.tzinfo)})")
-        except ValueError as ve:
-            print(f"TRACE_DT: User {user_id}: Isolated test: '{test_iso_string}' FAILED TO PARSE (ValueError): {ve}")
-        except Exception as e:
-            print(f"TRACE_DT: User {user_id}: Isolated test: '{test_iso_string}' FAILED WITH UNEXPECTED ERROR: {e}")
-        # >>>>> END OF NEW DEBUGGING BLOCK <<<<<
+        # --- START: MORE DETAILED STRING INSPECTION & FALLBACK PARSING ---
+        if isinstance(expiry_str_from_db, str):
+            print(f"TRACE_DT: User {user_id}: repr(expiry_str_from_db): {repr(expiry_str_from_db)}")
+            print(f"TRACE_DT: User {user_id}: len(expiry_str_from_db): {len(expiry_str_from_db)}")
+            char_codes = [str(ord(c)) for c in expiry_str_from_db]
+            print(f"TRACE_DT: User {user_id}: Char codes: {','.join(char_codes)}")
+        # --- END: MORE DETAILED STRING INSPECTION ---
 
         expiry_dt_from_db = None
         if isinstance(expiry_str_from_db, str) and expiry_str_from_db:
+            # First attempt with fromisoformat
             try:
                 expiry_dt_from_db = datetime.fromisoformat(expiry_str_from_db)
-                # TRACE_DT: 3a. After fromisoformat, before tz adjustment
-                print(f"TRACE_DT: User {user_id}: expiry_dt_from_db after fromisoformat: {expiry_dt_from_db} (tzinfo: {expiry_dt_from_db.tzinfo}, id_tzinfo: {id(expiry_dt_from_db.tzinfo) if expiry_dt_from_db and expiry_dt_from_db.tzinfo else 'N/A'})")
-
-                # CRITICAL FIX ATTEMPT 2: Ensure expiry is explicitly timezone.utc
-                # Even if fromisoformat returns a tzinfo, we replace it with the exact
-                # datetime.timezone.utc singleton to rule out tzinfo object identity issues.
-                if expiry_dt_from_db and expiry_dt_from_db.tzinfo is not None:
-                    # First convert to UTC, then replace tzinfo with the singleton
-                    expiry_dt_from_db = expiry_dt_from_db.astimezone(timezone.utc).replace(tzinfo=timezone.utc)
-                elif expiry_dt_from_db: # It's naive but not None, assume UTC
-                    expiry_dt_from_db = expiry_dt_from_db.replace(tzinfo=timezone.utc)
-                # If expiry_dt_from_db is None, it remains None.
+                print(f"TRACE_DT: User {user_id}: fromisoformat SUCCESS: {expiry_dt_from_db} (tzinfo: {expiry_dt_from_db.tzinfo}, id_tzinfo: {id(expiry_dt_from_db.tzinfo) if expiry_dt_from_db.tzinfo else 'N/A'})")
+            except ValueError as ve:
+                print(f"TRACE_DT: User {user_id}: fromisoformat FAILED (ValueError): {ve}")
+                # --- FALLBACK TO STRPTIME ---
+                # Pattern for 'YYYY-MM-DDTHH:MM:SS.ffffffZ'
+                # Remove 'Z' for strptime, then add UTC tzinfo
+                if expiry_str_from_db.endswith('Z'):
+                    strptime_string = expiry_str_from_db[:-1]
+                else:
+                    strptime_string = expiry_str_from_db
                 
-                # TRACE_DT: 3b. After TZ adjustment and explicit timezone.utc replacement
-                print(f"TRACE_DT: User {user_id}: expiry_dt_from_db after TZ adjustment & explicit UTC: {expiry_dt_from_db} (tzinfo: {expiry_dt_from_db.tzinfo}, id_tzinfo: {id(expiry_dt_from_db.tzinfo) if expiry_dt_from_db else 'N/A'})")
-
-            except ValueError:
+                try:
+                    expiry_dt_from_db = datetime.strptime(strptime_string, '%Y-%m-%dT%H:%M:%S.%f')
+                    # strptime returns naive, so make it aware with UTC
+                    expiry_dt_from_db = expiry_dt_from_db.replace(tzinfo=timezone.utc)
+                    print(f"TRACE_DT: User {user_id}: strptime SUCCESS (fallback): {expiry_dt_from_db} (tzinfo: {expiry_dt_from_db.tzinfo}, id_tzinfo: {id(expiry_dt_from_db.tzinfo)})")
+                except ValueError as ve_strptime:
+                    print(f"TRACE_DT: User {user_id}: strptime FAILED (ValueError): {ve_strptime}")
+                    expiry_dt_from_db = None # Both fromisoformat and strptime failed
+                except Exception as e_strptime:
+                    print(f"TRACE_DT: User {user_id}: strptime FAILED (Unexpected Error): {e_strptime}")
+                    expiry_dt_from_db = None
+                # --- END FALLBACK ---
+            except Exception as e:
+                print(f"TRACE_DT: User {user_id}: fromisoformat FAILED (Unexpected Error): {e}")
                 expiry_dt_from_db = None
-                print(f"TRACE_DT: User {user_id}: ValueError parsing expiry string: {expiry_str_from_db}")
+
+            # Apply timezone standardization only if successfully parsed by any method
+            if expiry_dt_from_db is not None:
+                # Ensure expiry is explicitly timezone.utc, converting if necessary
+                expiry_dt_from_db = expiry_dt_from_db.astimezone(timezone.utc).replace(tzinfo=timezone.utc)
+                print(f"TRACE_DT: User {user_id}: expiry_dt_from_db after final TZ standardization: {expiry_dt_from_db} (tzinfo: {expiry_dt_from_db.tzinfo}, id_tzinfo: {id(expiry_dt_from_db.tzinfo)})")
         else:
             print(f"TRACE_DT: User {user_id}: 'expiry' from DB is not a string or is empty: {expiry_str_from_db}")
 
-        # TRACE_DT: 4. Expiry value being passed to Credentials constructor
-        print(f"TRACE_DT: User {user_id}: expiry passed to Credentials: {expiry_dt_from_db} (type: {type(expiry_dt_from_db)}, tzinfo: {expiry_dt_from_db.tzinfo if expiry_dt_from_db else 'N/A'})")
+        # TRACE_DT: 4. Final expiry passed to Credentials constructor
+        print(f"TRACE_DT: User {user_id}: Final expiry passed to Credentials: {expiry_dt_from_db} (type: {type(expiry_dt_from_db)}, tzinfo: {expiry_dt_from_db.tzinfo if expiry_dt_from_db else 'N/A'})")
         # Also print id of timezone.utc to compare
         print(f"TRACE_DT: User {user_id}: ID of datetime.timezone.utc: {id(timezone.utc)}")
 
