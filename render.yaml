@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: aibuddies-backend # Your service name on Render. Choose a unique name!
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      # --- IMPORTANT: These are your .env variables, exposed to Render ---
+      # Render will securely inject these as environment variables into your running app.
+      # You will configure these in the Render Dashboard, NOT here with actual values.
+      # This render.yaml is primarily for build/start commands.
+      # For your actual secrets (GOOGLE_API_KEY, SECRET_KEY, GOOGLE_CLIENT_ID, etc.),
+      # you will add them under the "Environment" section of your service in the Render dashboard.
+      # For now, we list placeholders.
+      - key: GOOGLE_API_KEY
+        # value: (Leave empty, set securely in Render Dashboard)
+      - key: SECRET_KEY
+        # value: (Leave empty, set securely in Render Dashboard)
+      - key: GOOGLE_CLIENT_ID
+        # value: (Leave empty, set securely in Render Dashboard)
+      - key: GOOGLE_CLIENT_SECRET
+        # value: (Leave empty, set securely in Render Dashboard)
+      - key: GOOGLE_REDIRECT_URI # This will be your Render app's public URL
+        # value: (Leave empty, set securely in Render Dashboard AFTER deployment)
+      
+      # For SQLite, ensure it is saved in a persistent location if needed,
+      # but for development, it's recreated on each deploy/restart by create_database_and_tables.
+      - key: DATABASE_URL
+        value: sqlite:///./database.db # Points to the database file in the service root
