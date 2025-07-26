@@ -7,6 +7,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import Flow
+from googleapiclient.errors import HttpError
 
 from src.core import config
 from src.database import crud, database
@@ -21,27 +22,28 @@ SCOPES = [
 ]
 
 def build_google_service(service_name: str, version: str, user_id: int):
+    """
+    Builds and returns an authorized Google API service object.
+    Handles credential loading, parsing, and automated token refreshing.
+    """
     db = database.SessionLocal()
     try:
         db_creds = crud.get_google_credentials_by_user_id(db, user_id)
         if not db_creds:
-            raise Exception(f"No Google credentials found for user ID {user_id}. Link your account.")
+            raise Exception(f"No Google credentials found for user ID {user_id}. Please link your Google account first.")
 
         token_data = json.loads(db_creds.token)
         expiry_str = token_data.get('expiry', '')
+        expiry_dt_naive = None
 
-        # Parse expiry into timezone-aware datetime
-        expiry_dt = None
         if expiry_str:
-            # Handle trailing 'Z'
+            # Parse the RFC3339 string from the DB into a timezone-aware datetime object.
             iso_str = expiry_str.replace("Z", "+00:00")
-            try:
-                expiry_dt = datetime.fromisoformat(iso_str)
-            except ValueError:
-                # Fallback for microseconds
-                naiv = datetime.strptime(iso_str.rstrip("+00:00"), '%Y-%m-%dT%H:%M:%S.%f')
-                expiry_dt = naiv.replace(tzinfo=timezone.utc)
-            expiry_dt = expiry_dt.astimezone(timezone.utc).replace(tzinfo=timezone.utc)
+            aware_dt = datetime.fromisoformat(iso_str)
+            
+            # **CRITICAL FIX**: The google-auth library expects a naive datetime representing UTC.
+            # We must remove the timezone info before passing it to the Credentials object.
+            expiry_dt_naive = aware_dt.replace(tzinfo=None)
 
         creds = Credentials(
             token=token_data['access_token'],
@@ -50,40 +52,49 @@ def build_google_service(service_name: str, version: str, user_id: int):
             client_id=token_data.get('client_id'),
             client_secret=token_data.get('client_secret'),
             scopes=token_data.get('scopes', []),
-            expiry=expiry_dt
+            expiry=expiry_dt_naive  # Pass the naive datetime here
         )
 
-        # Manual UTC-aware expiry check
-        now_utc = datetime.now(timezone.utc)
-        is_expired = False
-        if creds.expiry:
-            exp = creds.expiry
-            if exp.tzinfo is None:
-                exp = exp.replace(tzinfo=timezone.utc)
-            else:
-                exp = exp.astimezone(timezone.utc)
-            is_expired = now_utc >= exp
+        # Use the library's built-in properties to check for expiry and refresh token.
+        # This is more robust than a manual time comparison.
+        if creds.expired and creds.refresh_token:
+            print(f"DEBUG: Google credentials for user {user_id} are expired. Refreshing...")
+            try:
+                # The refresh method will update the creds object in-place.
+                creds.refresh(Request())
+                print(f"SUCCESS: Google credentials for user {user_id} refreshed successfully.")
+                
+                # The new expiry time from creds.expiry is a naive datetime (in UTC).
+                # We need to make it timezone-aware again before converting to RFC3339 for the DB.
+                new_aware_expiry = creds.expiry.replace(tzinfo=timezone.utc)
+                
+                # Prepare the updated token data for saving.
+                updated_token_data = {
+                    "access_token": creds.token,
+                    "refresh_token": creds.refresh_token,
+                    "token_uri": creds.token_uri,
+                    "client_id": creds.client_id or config.GOOGLE_CLIENT_ID,
+                    "client_secret": creds.client_secret or config.GOOGLE_CLIENT_SECRET,
+                    "scopes": creds.scopes,
+                    "expiry": new_aware_expiry # Pass the aware datetime to our CRUD function
+                }
+                
+                # Save the newly refreshed credentials back to the database.
+                crud.save_google_credentials(db, user_id, updated_token_data)
+                print(f"DEBUG: Saved refreshed Google credentials for user {user_id} to the database.")
 
-        # Refresh if expired
-        if is_expired:
-            if not creds.refresh_token:
-                raise Exception("Google credentials expired and cannot be refreshed. Please re-authenticate.")
-            creds.client_id = config.GOOGLE_CLIENT_ID
-            creds.client_secret = config.GOOGLE_CLIENT_SECRET
-            creds.refresh(Request())
+            except HttpError as e:
+                # This can happen if the refresh token is revoked by the user.
+                print(f"ERROR: Failed to refresh Google token for user {user_id}. Re-authentication may be required. Details: {e}")
+                # Depending on the error, you might want to delete the stored credentials.
+                # e.g., if e.resp.status == 401 or 'invalid_grant' in str(e):
+                #     crud.delete_google_credentials_by_user_id(db, user_id)
+                raise Exception("Failed to refresh Google credentials. Please try linking your account again.") from e
+        
+        elif creds.expired and not creds.refresh_token:
+             raise Exception("Google credentials have expired and cannot be refreshed automatically. Please link your account again.")
 
-            # Save refreshed credentials with RFC3339 expiry
-            updated = {
-                "access_token": creds.token,
-                "refresh_token": creds.refresh_token,
-                "token_uri": creds.token_uri,
-                "client_id": config.GOOGLE_CLIENT_ID,
-                "client_secret": config.GOOGLE_CLIENT_SECRET,
-                "scopes": creds.scopes,
-                "expiry": to_rfc3339(creds.expiry)
-            }
-            crud.save_google_credentials(db, user_id, updated)
-
+        # Build and return the authorized API service client.
         return build(service_name, version, credentials=creds)
 
     finally:
