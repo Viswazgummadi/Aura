@@ -48,7 +48,7 @@ def build_google_service(service_name: str, version: str, user_id: int):
         if isinstance(expiry_str_from_db, str) and expiry_str_from_db:
             # First attempt with fromisoformat
             try:
-                expiry_dt_from_db = datetime.fromisoformat(expiry_str_from_db)
+                expiry_dt_from_db = datetime.fromisoformat(expiry_str_from_db.replace("Z", "+00:00"))
                 print(f"TRACE_DT: User {user_id}: fromisoformat SUCCESS: {expiry_dt_from_db} (tzinfo: {expiry_dt_from_db.tzinfo}, id_tzinfo: {id(expiry_dt_from_db.tzinfo) if expiry_dt_from_db.tzinfo else 'N/A'})")
             except ValueError as ve:
                 print(f"TRACE_DT: User {user_id}: fromisoformat FAILED (ValueError): {ve}")
@@ -102,9 +102,11 @@ def build_google_service(service_name: str, version: str, user_id: int):
         
         # TRACE_DT: 5. Before creds.valid check
         current_time_utc = datetime.now(timezone.utc)
+        if not creds.expiry:
+            raise Exception("Google credential expiry is missing or failed to parse.")
+
         print(f"TRACE_DT: User {user_id}: Creds object expiry: {creds.expiry} (type: {type(creds.expiry)}, tzinfo: {creds.expiry.tzinfo}, id_tzinfo: {id(creds.expiry.tzinfo) if creds.expiry else 'N/A'})")
         print(f"TRACE_DT: User {user_id}: Current time (UTC): {current_time_utc} (type: {type(current_time_utc)}, tzinfo: {current_time_utc.tzinfo}, id_tzinfo: {id(current_time_utc.tzinfo)})")
-
         # Now, for good measure, we'll explicitly try a comparison with `is` for tzinfo objects
         if creds.expiry and current_time_utc:
             print(f"TRACE_DT: User {user_id}: Are tzinfo objects IDENTICAL? {creds.expiry.tzinfo is current_time_utc.tzinfo}")
