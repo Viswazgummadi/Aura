@@ -4,7 +4,7 @@ import json
 from typing import List, Optional
 
 from sqlalchemy.orm import Session
-
+import secrets
 from . import models
 from src.core.security import get_password_hash
 from src.core.config import DateTimeEncoder # <-- NEW IMPORT: Our custom JSON encoder
