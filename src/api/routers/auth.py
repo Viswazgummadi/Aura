@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
-from datetime import timedelta, datetime, timezone # <-- NEW IMPORT: timezone
+from datetime import timedelta, datetime, timezone 
 import json
-
+from src.api.dependencies import get_current_user
 from src.database import crud, database, models
 from src.database.database import get_db
 from src.core import security
