@@ -118,6 +118,7 @@ async def google_status(
         
         is_token_valid = False
         expiry_info = "N/A"
+        now_utc = datetime.now(timezone.utc)
 
         if expiry_str:
             if expiry_str.endswith("Z"):
@@ -133,7 +134,6 @@ async def google_status(
                     detail=f"Invalid expiry datetime format: {expiry_str}"
                 )
 
-            now_utc = datetime.now(timezone.utc)
 
             is_token_valid = creds_expiry_dt > now_utc
             expiry_info = creds_expiry_dt.isoformat()
