@@ -120,15 +120,24 @@ async def google_status(
         expiry_info = "N/A"
 
         if expiry_str:
-            # Convert the stored ISO string to a timezone-aware datetime object
-            creds_expiry_dt = datetime.fromisoformat(expiry_str)
+            if expiry_str.endswith("Z"):
+                expiry_str = expiry_str.replace("Z", "+00:00")
             
-            # Get the current time as a timezone-aware datetime object (UTC)
+            try:
+                creds_expiry_dt = datetime.fromisoformat(expiry_str)
+                print(f"DEBUG: creds_expiry_dt = {creds_expiry_dt}, now_utc = {now_utc}")
+            
+            except ValueError as ve:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Invalid expiry datetime format: {expiry_str}"
+                )
+
             now_utc = datetime.now(timezone.utc)
-            
-            # Perform the comparison using two timezone-aware datetimes
+
             is_token_valid = creds_expiry_dt > now_utc
             expiry_info = creds_expiry_dt.isoformat()
+
         
         return {
             "status": "connected",
