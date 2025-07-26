@@ -1,7 +1,7 @@
 services:
   - type: web
     name: aibuddies-backend # Your service name on Render. Choose a unique name!
-    env: python
+    env: python-3.10.14
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
     envVars:
@@ -22,7 +22,7 @@ services:
         # value: (Leave empty, set securely in Render Dashboard)
       - key: GOOGLE_REDIRECT_URI # This will be your Render app's public URL
         # value: (Leave empty, set securely in Render Dashboard AFTER deployment)
-      
+
       # For SQLite, ensure it is saved in a persistent location if needed,
       # but for development, it's recreated on each deploy/restart by create_database_and_tables.
       - key: DATABASE_URL
