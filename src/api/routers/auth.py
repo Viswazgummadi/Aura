@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
-from datetime import timedelta, datetime
-import json # <-- Ensure this import is here
+from datetime import timedelta, datetime, timezone # <-- NEW IMPORT: timezone
+import json
 
 from src.database import crud, database, models
 from src.database.database import get_db
@@ -12,7 +12,6 @@ from src.core import config
 from src.core import gcp_auth
 
 from src.database.models import UserCreate, UserResponse, Token, TokenData
-from src.api.dependencies import get_current_user
 
 from google.oauth2.credentials import Credentials
 
@@ -21,7 +20,7 @@ router = APIRouter(
     tags=["Authentication"]
 )
 
-# ... (register_user and login_for_access_token are unchanged) ...
+# --- Endpoint for User Registration ---
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register_user(user: UserCreate, db: Session = Depends(get_db)):
     print(f"API: Received registration request for email: {user.email}")
@@ -35,6 +34,7 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
     print(f"API: User registered successfully: {new_user.email}")
     return new_user
 
+# --- Endpoint for User Login and Token Generation ---
 @router.post("/token", response_model=Token)
 def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -55,8 +55,8 @@ def login_for_access_token(
     print(f"API: User logged in, token issued for: {user.email}")
     return {"access_token": access_token, "token_type": "bearer"}
 
+# --- Google OAuth Endpoints ---
 
-# ... (google_login and google_callback are unchanged) ...
 @router.get("/google/login", status_code=status.HTTP_302_FOUND, response_class=RedirectResponse)
 async def google_login(
     current_user: models.User = Depends(get_current_user),
@@ -110,33 +110,36 @@ async def google_status(
         return {"status": "not_connected", "detail": "Google account not linked."}
     
     try:
-        # Load the stored token string as a JSON dictionary
-        token_data_from_db = json.loads(db_creds.token) # <-- THE FIX: Load as JSON
+        token_data_from_db = json.loads(db_creds.token)
         
-        # Reconstruct Credentials object from the loaded dictionary
-        creds = Credentials(
-            token=token_data_from_db['access_token'],
-            refresh_token=token_data_from_db.get('refresh_token'),
-            token_uri=token_data_from_db.get('token_uri'),
-            client_id=token_data_from_db.get('client_id'),
-            client_secret=token_data_from_db.get('client_secret'),
-            scopes=token_data_from_db.get('scopes', gcp_auth.SCOPES), # Use scopes from DB if available, else default
-            # Ensure expiry is a datetime object
-            expiry=datetime.fromisoformat(token_data_from_db['expiry']) if isinstance(token_data_from_db.get('expiry'), str) else token_data_from_db.get('expiry')
-        )
+        # Attempt to get expiry from token_data_from_db.
+        # It should be an ISO string if previous steps were correctly applied.
+        expiry_str = token_data_from_db.get('expiry')
         
-        is_valid = creds.valid
-        expiry_info = creds.expiry.isoformat() if creds.expiry else "N/A"
+        is_token_valid = False
+        expiry_info = "N/A"
+
+        if expiry_str:
+            # Convert the stored ISO string to a timezone-aware datetime object
+            creds_expiry_dt = datetime.fromisoformat(expiry_str)
+            
+            # Get the current time as a timezone-aware datetime object (UTC)
+            now_utc = datetime.now(timezone.utc)
+            
+            # Perform the comparison using two timezone-aware datetimes
+            is_token_valid = creds_expiry_dt > now_utc
+            expiry_info = creds_expiry_dt.isoformat()
         
         return {
             "status": "connected",
-            "detail": "Google account linked and credentials are valid (or refreshed).",
-            "is_token_valid": is_valid,
+            "detail": "Google account linked and credentials are valid.",
+            "is_token_valid": is_token_valid,
             "expiry": expiry_info,
             "scopes": db_creds.scopes.split(',') if db_creds.scopes else []
         }
     except Exception as e:
         print(f"ERROR: Failed to verify Google credentials for user {current_user.id}: {e}")
+        # Re-raise HTTPException to ensure it's caught by FastAPI's error handler
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to verify linked Google credentials: {e}"
