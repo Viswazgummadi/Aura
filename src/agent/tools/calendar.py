@@ -1,69 +1,52 @@
 import datetime
 from googleapiclient.errors import HttpError
 
-# Import the centralized function to build a Google service
 from src.core.gcp_auth import build_google_service
 
 # --- Public Tool Functions for Calendar ---
 
-def fetch_upcoming_events(user_id: int, max_results: int = 5) -> list: # <-- NEW: user_id argument
-    """
-    Fetches upcoming events from the user's primary calendar.
-    
-    Args:
-        user_id (int): The ID of the AIBuddies user whose calendar to access.
-        max_results (int): The maximum number of events to retrieve.
-
-    Returns:
-        list: A list of event dictionaries.
-    """
+def fetch_upcoming_events(user_id: int, max_results: int = 5) -> list:
     print(f"TOOL: fetch_upcoming_events called for user ID: {user_id}")
     try:
-        # Pass the user_id to build_google_service
         service = build_google_service('calendar', 'v3', user_id=user_id)
         
-        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        # Ensure 'now' is explicitly timezone-aware UTC for the API call
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        
         events_result = service.events().list(
-            calendarId="primary", timeMin=now, maxResults=max_results,
-            singleEvents=True, orderBy="startTime"
+            calendarId="primary", 
+            timeMin=now_utc.isoformat(), # Use ISO format string for API request
+            maxResults=max_results,
+            singleEvents=True, 
+            orderBy="startTime"
         ).execute()
         return events_result.get("items", [])
+    except HttpError as error:
+        print(f"An HttpError occurred in fetch_upcoming_events for user {user_id}: {error}")
+        raise error
     except Exception as e:
-        print(f"An error occurred in fetch_upcoming_events for user {user_id}: {e}")
+        print(f"An unexpected error occurred in fetch_upcoming_events for user {user_id}: {e}")
         raise e
 
 def create_new_event(
-    user_id: int, # <-- NEW: user_id argument
+    user_id: int,
     summary: str, 
     start_time_iso: str, 
     end_time_iso: str, 
     description: str = None, 
     location: str = None
 ) -> dict | None:
-    """
-    Creates a new event in the user's primary calendar.
-    
-    Args:
-        user_id (int): The ID of the AIBuddies user whose calendar to access.
-        summary (str): The title of the event.
-        start_time_iso (str): Start time in ISO 8601 format (e.g., 'YYYY-MM-DDTHH:MM:SSZ').
-        end_time_iso (str): End time in ISO 8601 format.
-        description (str, optional): Description of the event.
-        location (str, optional): Location of the event.
-
-    Returns:
-        dict | None: The newly created event dictionary, or None if creation failed.
-    """
     print(f"TOOL: create_new_event called for user ID: {user_id}, summary: '{summary}'")
     try:
-        # Pass the user_id to build_google_service
         service = build_google_service('calendar', 'v3', user_id=user_id)
 
+        # The API expects ISO 8601 with timezone info.
+        # We explicitly set 'timeZone': 'UTC' for consistency.
         event_body = {
             'summary': summary,
             'location': location,
             'description': description,
-            'start': {'dateTime': start_time_iso, 'timeZone': 'UTC'}, # Assume UTC for simplicity from original code
+            'start': {'dateTime': start_time_iso, 'timeZone': 'UTC'},
             'end': {'dateTime': end_time_iso, 'timeZone': 'UTC'},
         }
 
