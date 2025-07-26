@@ -1,11 +1,13 @@
 import os.path
 import json
 from datetime import datetime, timezone
+import httpx # <-- NEW IMPORT: For making HTTP requests directly
+
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow
+from google_auth_oauthlib.flow import Flow # We still need Flow for get_google_auth_url
 from googleapiclient.discovery import build
-
+from datetime import timedelta
 from src.core import config
 from src.database import crud, database
 from src.database import models
@@ -21,7 +23,6 @@ SCOPES = [
 ]
 
 def build_google_service(service_name: str, version: str, user_id: int):
-    # ... (this function is unchanged from previous correct version) ...
     db = database.SessionLocal()
     try:
         db_creds = crud.get_google_credentials_by_user_id(db, user_id)
@@ -67,7 +68,6 @@ def build_google_service(service_name: str, version: str, user_id: int):
 # --- Functions for the Web Server OAuth Flow ---
 
 def get_google_auth_url(state: str) -> str:
-    # ... (this function is unchanged) ...
     if not all([config.GOOGLE_CLIENT_ID, config.GOOGLE_CLIENT_SECRET, config.GOOGLE_REDIRECT_URI]):
         raise Exception("Google OAuth environment variables (CLIENT_ID, CLIENT_SECRET, REDIRECT_URI) are not set.")
 
@@ -95,14 +95,6 @@ def get_google_auth_url(state: str) -> str:
     print(f"DEBUG: Generated Google Auth URL with state '{state}': {authorization_url}")
     return authorization_url
 
-# NEW HELPER FUNCTION to perform the blocking fetch_token call
-def _perform_fetch_token_blocking(flow_instance: Flow, auth_code: str):
-    """
-    Helper function to perform the blocking flow.fetch_token() call.
-    This is designed to be run within concurrent.futures.ThreadPoolExecutor via run_in_executor.
-    """
-    flow_instance.fetch_token(auth_code)
-
 
 async def exchange_code_for_token(auth_code: str, state: str) -> models.GoogleCredentials:
     db = database.SessionLocal()
@@ -116,36 +108,44 @@ async def exchange_code_for_token(auth_code: str, state: str) -> models.GoogleCr
         print(f"API: OAuth state '{state}' verified and deleted for user ID: {user_id_from_state}.")
 
         if not all([config.GOOGLE_CLIENT_ID, config.GOOGLE_CLIENT_SECRET, config.GOOGLE_REDIRECT_URI]):
-            raise Exception("Google OAuth environment variables (CLIENT_ID, CLIENT_CLIENT_SECRET, REDIRECT_URI) are not set.") # Corrected variable name in print
+            raise Exception("Google OAuth environment variables (CLIENT_ID, CLIENT_SECRET, REDIRECT_URI) are not set.")
 
-        flow = Flow.from_client_config(
-            client_config={
-                "web": {
+        # --- THE FIX: MANUAL TOKEN EXCHANGE WITH HTTX ---
+        async with httpx.AsyncClient() as client:
+            token_response = await client.post(
+                "https://oauth2.googleapis.com/token", # Google's token endpoint
+                data={
+                    "code": auth_code,
                     "client_id": config.GOOGLE_CLIENT_ID,
                     "client_secret": config.GOOGLE_CLIENT_SECRET,
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token",
-                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                    "redirect_uris": [config.GOOGLE_REDIRECT_URI],
+                    "redirect_uri": config.GOOGLE_REDIRECT_URI,
+                    "grant_type": "authorization_code"
                 }
-            },
-            scopes=SCOPES,
-            redirect_uri=config.GOOGLE_REDIRECT_URI
-        )
-        
-        loop = asyncio.get_running_loop()
-        # THE FIX IS HERE: Call the new wrapper function
-        await loop.run_in_executor(None, _perform_fetch_token_blocking, flow, auth_code) # <-- CORRECTED CALL
-
-        creds = flow.credentials
+            )
+            token_response.raise_for_status() # Raise an exception for 4xx/5xx responses
+            token_data = token_response.json()
+            
+            # Extract credentials from the response
+            # httpx will perform this in the main async loop, no need for run_in_executor
+            # No need for google_auth_oauthlib.flow.Flow.fetch_token()
+            creds = Credentials(
+                token=token_data['access_token'],
+                refresh_token=token_data.get('refresh_token'),
+                token_uri="https://oauth2.googleapis.com/token", # Standard token URI
+                client_id=config.GOOGLE_CLIENT_ID,
+                client_secret=config.GOOGLE_CLIENT_SECRET,
+                scopes=token_data.get('scope', '').split(' '), # Convert space-separated string to list
+                expiry=datetime.now(timezone.utc) + timedelta(seconds=token_data.get('expires_in', 3600)) # Calculate expiry
+            )
+        # --- END OF FIX ---
         
         token_data_for_db = {
-            "token": creds.token,
+            "token": creds.token, # Access token string
             "refresh_token": creds.refresh_token,
             "token_uri": creds.token_uri,
             "client_id": creds.client_id,
             "client_secret": creds.client_secret,
-            "scopes": creds.scopes,
+            "scopes": creds.scopes, # List of scopes
             "expiry": creds.expiry.astimezone(timezone.utc) if creds.expiry else None
         }
         
@@ -153,10 +153,14 @@ async def exchange_code_for_token(auth_code: str, state: str) -> models.GoogleCr
         print(f"DEBUG: Google credentials saved for user {user_id_from_state}.")
             
         return db_creds
+    except httpx.HTTPStatusError as e:
+        print(f"ERROR: HTTP Error during token exchange: {e.response.status_code} - {e.response.text}")
+        raise Exception(f"Failed to exchange Google authorization code: HTTP Error {e.response.status_code}")
     except Exception as e:
         print(f"ERROR: Google token exchange failed: {e}")
         raise
     finally:
         db.close()
 
-import asyncio
+# asyncio is no longer directly imported here as httpx is async native.
+# import asyncio 
