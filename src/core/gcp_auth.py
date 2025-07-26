@@ -11,6 +11,7 @@ from google_auth_oauthlib.flow import Flow
 from src.core import config
 from src.database import crud, database
 from src.database import models
+from src.core.utils import to_rfc3339 # <-- NEW IMPORT
 
 SCOPES = [
     "https://www.googleapis.com/auth/calendar",
@@ -28,6 +29,23 @@ def build_google_service(service_name: str, version: str, user_id: int):
 
         creds_data_from_db = json.loads(db_creds.token)
         
+        # Ensure expiry from DB is explicitly timezone-aware UTC if present
+        expiry_dt_from_db = None
+        if isinstance(creds_data_from_db.get('expiry'), str) and creds_data_from_db.get('expiry'):
+            try:
+                # Use to_rfc3339 to convert back and ensure tz-awareness if needed
+                # However, fromisoformat handles 'Z' already and creates tz-aware objects
+                expiry_dt_from_db = datetime.fromisoformat(creds_data_from_db['expiry'])
+                # No need to replace tzinfo, fromisoformat handles 'Z' to create aware datetime
+                # Just ensure it's converted to UTC if it's not already, though it should be.
+                if expiry_dt_from_db.tzinfo is not None:
+                    expiry_dt_from_db = expiry_dt_from_db.astimezone(timezone.utc)
+                else: # Fallback if for some reason it's naive, assume UTC
+                     expiry_dt_from_db = expiry_dt_from_db.replace(tzinfo=timezone.utc)
+
+            except ValueError:
+                expiry_dt_from_db = None
+
         creds = Credentials(
             token=creds_data_from_db['access_token'],
             refresh_token=creds_data_from_db.get('refresh_token'),
@@ -35,7 +53,7 @@ def build_google_service(service_name: str, version: str, user_id: int):
             client_id=creds_data_from_db.get('client_id'),
             client_secret=creds_data_from_db.get('client_secret'),
             scopes=creds_data_from_db.get('scopes', []),
-            expiry=datetime.fromisoformat(creds_data_from_db['expiry']) if isinstance(creds_data_from_db.get('expiry'), str) and creds_data_from_db.get('expiry') else None
+            expiry=expiry_dt_from_db
         )
 
         if not creds.valid and creds.refresh_token:
@@ -55,7 +73,7 @@ def build_google_service(service_name: str, version: str, user_id: int):
                 "client_id": creds.client_id,
                 "client_secret": creds.client_secret,
                 "scopes": creds.scopes,
-                "expiry": creds.expiry.astimezone(timezone.utc) if creds.expiry else None # Pass datetime object
+                "expiry": creds.expiry.astimezone(timezone.utc).isoformat() if creds.expiry else None
             }
             crud.save_google_credentials(db, user_id, updated_token_data)
             print(f"DEBUG: Google token refreshed and saved for user {user_id}.")
@@ -66,7 +84,7 @@ def build_google_service(service_name: str, version: str, user_id: int):
     finally:
         db.close()
 
-# --- Functions for the Web Server OAuth Flow ---
+# --- Functions for the Web Server OAuth Flow (unchanged from previous working version) ---
 
 def get_google_auth_url(state: str) -> str:
     if not all([config.GOOGLE_CLIENT_ID, config.GOOGLE_CLIENT_SECRET, config.GOOGLE_REDIRECT_URI]):
@@ -125,7 +143,6 @@ async def exchange_code_for_token(auth_code: str, state: str) -> models.GoogleCr
             token_response.raise_for_status()
             token_data_from_google = token_response.json()
             
-            # Prepare token data for storage: ALWAYS as a dictionary with datetime object for expiry
             expiry_dt = datetime.now(timezone.utc) + timedelta(seconds=token_data_from_google.get('expires_in', 3600))
             token_data_for_db = {
                 "access_token": token_data_from_google['access_token'],
@@ -134,7 +151,7 @@ async def exchange_code_for_token(auth_code: str, state: str) -> models.GoogleCr
                 "client_id": config.GOOGLE_CLIENT_ID,
                 "client_secret": config.GOOGLE_CLIENT_SECRET,
                 "scopes": token_data_from_google.get('scope', '').split(' '),
-                "expiry": expiry_dt # Pass datetime object
+                "expiry": expiry_dt # Pass datetime object, will be serialized by crud.py
             }
         
         db_creds = crud.save_google_credentials(db, user_id_from_state, token_data_for_db)

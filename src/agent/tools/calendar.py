@@ -2,6 +2,7 @@ import datetime
 from googleapiclient.errors import HttpError
 
 from src.core.gcp_auth import build_google_service
+from src.core.utils import to_rfc3339 # <-- NEW IMPORT
 
 # --- Public Tool Functions for Calendar ---
 
@@ -10,12 +11,15 @@ def fetch_upcoming_events(user_id: int, max_results: int = 5) -> list:
     try:
         service = build_google_service('calendar', 'v3', user_id=user_id)
         
-        # Ensure 'now' is explicitly timezone-aware UTC for the API call
+        # Get current time as timezone-aware UTC datetime
         now_utc = datetime.datetime.now(datetime.timezone.utc)
+        
+        # Convert to RFC 3339 string for the API call
+        time_min_rfc3339 = to_rfc3339(now_utc) # <-- FIX: Use new utility function
         
         events_result = service.events().list(
             calendarId="primary", 
-            timeMin=now_utc.isoformat(), # Use ISO format string for API request
+            timeMin=time_min_rfc3339, # <-- Use RFC 3339 string
             maxResults=max_results,
             singleEvents=True, 
             orderBy="startTime"
@@ -31,8 +35,8 @@ def fetch_upcoming_events(user_id: int, max_results: int = 5) -> list:
 def create_new_event(
     user_id: int,
     summary: str, 
-    start_time_iso: str, 
-    end_time_iso: str, 
+    start_time_iso: str, # This should already be RFC 3339 from frontend/Pydantic
+    end_time_iso: str,   # This should already be RFC 3339 from frontend/Pydantic
     description: str = None, 
     location: str = None
 ) -> dict | None:
@@ -40,8 +44,10 @@ def create_new_event(
     try:
         service = build_google_service('calendar', 'v3', user_id=user_id)
 
-        # The API expects ISO 8601 with timezone info.
-        # We explicitly set 'timeZone': 'UTC' for consistency.
+        # Ensure that start_time_iso and end_time_iso are indeed RFC 3339 compliant strings
+        # If your frontend sends "YYYY-MM-DDTHH:MM:SS" (naive), you might need to
+        # parse them to datetime objects, make them aware, and then to_rfc3339.
+        # For this example, we assume the input ISO strings are already correct.
         event_body = {
             'summary': summary,
             'location': location,
