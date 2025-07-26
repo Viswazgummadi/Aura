@@ -75,7 +75,9 @@ def build_google_service(service_name: str, version: str, user_id: int):
                 "scopes": creds.scopes,
                 "expiry": creds.expiry.astimezone(timezone.utc).isoformat() if creds.expiry else None
             }
-            crud.save_google_credentials(db, user_id, updated_token_data)
+            # The DateTimeEncoder fix would be applied by crud.save_google_credentials
+            # when it serializes updated_token_data to JSON before saving to DB.
+            crud.save_google_credentials(db, user_id, updated_token_data) 
             print(f"DEBUG: Google token refreshed and saved for user {user_id}.")
         elif not creds.valid and not creds.refresh_token:
              raise Exception(f"Google credentials for user ID {user_id} are expired and cannot be refreshed. Please re-authenticate.")
@@ -127,7 +129,7 @@ async def exchange_code_for_token(auth_code: str, state: str) -> models.GoogleCr
         print(f"API: OAuth state '{state}' verified and deleted for user ID: {user_id_from_state}.")
 
         if not all([config.GOOGLE_CLIENT_ID, config.GOOGLE_CLIENT_SECRET, config.GOOGLE_REDIRECT_URI]):
-            raise Exception("Google OAuth environment variables (CLIENT_ID, CLIENT_SECRET, REDIRECT_URI) are not set.")
+            raise Exception("Google OAuth environment variables (CLIENT_ID, CLIENT_CLIENT_SECRET, REDIRECT_URI) are not set.")
 
         async with httpx.AsyncClient() as client:
             token_response = await client.post(
@@ -151,7 +153,7 @@ async def exchange_code_for_token(auth_code: str, state: str) -> models.GoogleCr
                 "client_id": config.GOOGLE_CLIENT_ID,
                 "client_secret": config.GOOGLE_CLIENT_SECRET,
                 "scopes": token_data_from_google.get('scope', '').split(' '),
-                "expiry": expiry_dt # Pass datetime object, will be serialized by crud.py
+                "expiry": expiry_dt # Pass datetime object, will be serialized by crud.py using DateTimeEncoder
             }
         
         db_creds = crud.save_google_credentials(db, user_id_from_state, token_data_for_db)
