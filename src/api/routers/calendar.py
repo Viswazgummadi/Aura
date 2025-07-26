@@ -14,7 +14,7 @@ router = APIRouter(
 )
 
 @router.get("/events", response_model=List[CalendarEventResponse])
-async def get_upcoming_events(
+def get_upcoming_events(
     db: Session = Depends(get_db), # Not directly used but good practice for dependency chain
     current_user: User = Depends(get_current_user), # Requires authentication
     max_results: int = 5
@@ -25,7 +25,7 @@ async def get_upcoming_events(
     print(f"API: Fetching upcoming events for user ID: {current_user.id}")
     try:
         # Call the refactored calendar tool with user_id
-        events = await calendar_tool.fetch_upcoming_events(user_id=current_user.id, max_results=max_results)
+        events = calendar_tool.fetch_upcoming_events(user_id=current_user.id, max_results=max_results)
         # Convert to Pydantic model for response validation
         # The tool returns Google's dicts, so we map them to our Pydantic model
         return [
@@ -47,7 +47,7 @@ async def get_upcoming_events(
         )
 
 @router.post("/events", response_model=CalendarEventResponse, status_code=status.HTTP_201_CREATED)
-async def create_calendar_event(
+def create_calendar_event(
     event_data: CalendarEventCreate,
     db: Session = Depends(get_db), # Not directly used but good practice
     current_user: User = Depends(get_current_user) # Requires authentication
@@ -58,7 +58,7 @@ async def create_calendar_event(
     print(f"API: Creating calendar event for user ID: {current_user.id}, summary: '{event_data.summary}'")
     try:
         # Call the refactored calendar tool with user_id
-        new_event = await calendar_tool.create_new_event(
+        new_event = calendar_tool.create_new_event(
             user_id=current_user.id,
             summary=event_data.summary,
             start_time_iso=event_data.start_time_iso,

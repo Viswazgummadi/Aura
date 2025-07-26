@@ -21,6 +21,6 @@ google-auth-oauthlib==1.2.2 # <-- CORRECTED VERSION TO THE LATEST AVAILABLE
 # Utilities
 python-dotenv
 httpx
-passlib[bcrypt] 
+passlib[bcrypt]
 python-jose[cryptography]
 python-multipart

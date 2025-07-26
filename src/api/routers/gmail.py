@@ -14,7 +14,7 @@ router = APIRouter(
 )
 
 @router.get("/unread", response_model=List[GmailMessageResponse])
-async def get_unread_emails(
+def get_unread_emails(
     db: Session = Depends(get_db), # Not directly used but good practice
     current_user: User = Depends(get_current_user), # Requires authentication
     max_results: int = 5
@@ -24,7 +24,7 @@ async def get_unread_emails(
     """
     print(f"API: Fetching unread emails for user ID: {current_user.id}")
     try:
-        emails = await gmail_tool.fetch_unread_emails(user_id=current_user.id, max_results=max_results)
+        emails = gmail_tool.fetch_unread_emails(user_id=current_user.id, max_results=max_results)
         return [
             GmailMessageResponse(
                 id=email.get('id'),
@@ -40,7 +40,7 @@ async def get_unread_emails(
         )
 
 @router.get("/{message_id}/body")
-async def get_email_body(
+def get_email_body(
     message_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -50,7 +50,7 @@ async def get_email_body(
     """
     print(f"API: Getting email body for message {message_id} for user ID: {current_user.id}")
     try:
-        email_body = await gmail_tool.get_email_body(user_id=current_user.id, message_id=message_id)
+        email_body = gmail_tool.get_email_body(user_id=current_user.id, message_id=message_id)
         if email_body is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -64,7 +64,7 @@ async def get_email_body(
         )
 
 @router.put("/{message_id}/read", status_code=status.HTTP_204_NO_CONTENT)
-async def mark_email_as_read(
+def mark_email_as_read(
     message_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -74,7 +74,7 @@ async def mark_email_as_read(
     """
     print(f"API: Marking message {message_id} as read for user ID: {current_user.id}")
     try:
-        await gmail_tool.mark_message_as_read(user_id=current_user.id, message_id=message_id)
+        gmail_tool.mark_message_as_read(user_id=current_user.id, message_id=message_id)
         return # 204 No Content response
     except Exception as e:
         raise HTTPException(
@@ -86,7 +86,7 @@ async def mark_email_as_read(
 # These would typically be in an /admin router, but for now we put them here for simplicity.
 
 @router.post("/watch", status_code=status.HTTP_200_OK)
-async def watch_gmail_inbox(
+def watch_gmail_inbox(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -96,7 +96,7 @@ async def watch_gmail_inbox(
     """
     print(f"API: Attempting to watch Gmail inbox for user ID: {current_user.id}")
     try:
-        response = await gmail_watcher.watch_gmail_inbox(user_id=current_user.id)
+        response = gmail_watcher.watch_gmail_inbox(user_id=current_user.id)
         if response:
             return {"status": "success", "detail": "Gmail watch initiated.", "watch_data": response}
         else:
@@ -112,7 +112,7 @@ async def watch_gmail_inbox(
         )
 
 @router.post("/unwatch", status_code=status.HTTP_200_OK)
-async def unwatch_gmail_inbox(
+def unwatch_gmail_inbox(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -121,7 +121,7 @@ async def unwatch_gmail_inbox(
     """
     print(f"API: Attempting to stop Gmail watch for user ID: {current_user.id}")
     try:
-        stop_success = await gmail_watcher.stop_gmail_inbox_watch(user_id=current_user.id)
+        stop_success = gmail_watcher.stop_gmail_inbox_watch(user_id=current_user.id)
         if stop_success:
             return {"status": "success", "detail": "Gmail watch stopped."}
         else:
