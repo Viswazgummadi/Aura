@@ -1,4 +1,3 @@
-# AIBuddies/src/core/gcp_auth.py
 import os.path
 import json
 from datetime import datetime, timedelta, timezone
@@ -42,15 +41,20 @@ def build_google_service(service_name: str, version: str, user_id: int):
             try:
                 expiry_dt_from_db = datetime.fromisoformat(expiry_str_from_db)
                 # TRACE_DT: 3a. After fromisoformat, before tz adjustment
-                print(f"TRACE_DT: User {user_id}: expiry_dt_from_db after fromisoformat: {expiry_dt_from_db} (tzinfo: {expiry_dt_from_db.tzinfo})")
+                print(f"TRACE_DT: User {user_id}: expiry_dt_from_db after fromisoformat: {expiry_dt_from_db} (tzinfo: {expiry_dt_from_db.tzinfo}, id_tzinfo: {id(expiry_dt_from_db.tzinfo) if expiry_dt_from_db and expiry_dt_from_db.tzinfo else 'N/A'})")
 
-                if expiry_dt_from_db.tzinfo is not None:
-                    expiry_dt_from_db = expiry_dt_from_db.astimezone(timezone.utc)
-                else: # Fallback if for some reason it's naive, assume UTC
-                     expiry_dt_from_db = expiry_dt_from_db.replace(tzinfo=timezone.utc)
+                # CRITICAL FIX ATTEMPT 2: Ensure expiry is explicitly timezone.utc
+                # Even if fromisoformat returns a tzinfo, we replace it with the exact
+                # datetime.timezone.utc singleton to rule out tzinfo object identity issues.
+                if expiry_dt_from_db and expiry_dt_from_db.tzinfo is not None:
+                    # First convert to UTC, then replace tzinfo with the singleton
+                    expiry_dt_from_db = expiry_dt_from_db.astimezone(timezone.utc).replace(tzinfo=timezone.utc)
+                elif expiry_dt_from_db: # It's naive but not None, assume UTC
+                    expiry_dt_from_db = expiry_dt_from_db.replace(tzinfo=timezone.utc)
+                # If expiry_dt_from_db is None, it remains None.
                 
-                # TRACE_DT: 3b. After tz adjustment
-                print(f"TRACE_DT: User {user_id}: expiry_dt_from_db after TZ adjustment: {expiry_dt_from_db} (tzinfo: {expiry_dt_from_db.tzinfo})")
+                # TRACE_DT: 3b. After TZ adjustment and explicit timezone.utc replacement
+                print(f"TRACE_DT: User {user_id}: expiry_dt_from_db after TZ adjustment & explicit UTC: {expiry_dt_from_db} (tzinfo: {expiry_dt_from_db.tzinfo}, id_tzinfo: {id(expiry_dt_from_db.tzinfo) if expiry_dt_from_db else 'N/A'})")
 
             except ValueError:
                 expiry_dt_from_db = None
@@ -60,6 +64,9 @@ def build_google_service(service_name: str, version: str, user_id: int):
 
         # TRACE_DT: 4. Expiry value being passed to Credentials constructor
         print(f"TRACE_DT: User {user_id}: expiry passed to Credentials: {expiry_dt_from_db} (type: {type(expiry_dt_from_db)}, tzinfo: {expiry_dt_from_db.tzinfo if expiry_dt_from_db else 'N/A'})")
+        # Also print id of timezone.utc to compare
+        print(f"TRACE_DT: User {user_id}: ID of datetime.timezone.utc: {id(timezone.utc)}")
+
 
         creds = Credentials(
             token=creds_data_from_db['access_token'],
@@ -73,8 +80,12 @@ def build_google_service(service_name: str, version: str, user_id: int):
         
         # TRACE_DT: 5. Before creds.valid check
         current_time_utc = datetime.now(timezone.utc)
-        print(f"TRACE_DT: User {user_id}: Creds object expiry: {creds.expiry} (type: {type(creds.expiry)}, tzinfo: {creds.expiry.tzinfo if creds.expiry else 'N/A'})")
-        print(f"TRACE_DT: User {user_id}: Current time (UTC): {current_time_utc} (type: {type(current_time_utc)}, tzinfo: {current_time_utc.tzinfo})")
+        print(f"TRACE_DT: User {user_id}: Creds object expiry: {creds.expiry} (type: {type(creds.expiry)}, tzinfo: {creds.expiry.tzinfo}, id_tzinfo: {id(creds.expiry.tzinfo) if creds.expiry else 'N/A'})")
+        print(f"TRACE_DT: User {user_id}: Current time (UTC): {current_time_utc} (type: {type(current_time_utc)}, tzinfo: {current_time_utc.tzinfo}, id_tzinfo: {id(current_time_utc.tzinfo)})")
+
+        # Now, for good measure, we'll explicitly try a comparison with `is` for tzinfo objects
+        if creds.expiry and current_time_utc:
+            print(f"TRACE_DT: User {user_id}: Are tzinfo objects IDENTICAL? {creds.expiry.tzinfo is current_time_utc.tzinfo}")
 
 
         if not creds.valid and creds.refresh_token:
@@ -138,7 +149,7 @@ async def exchange_code_for_token(auth_code: str, state: str) -> models.GoogleCr
             expiry_dt = datetime.now(timezone.utc) + timedelta(seconds=token_data_from_google.get('expires_in', 3600))
             
             # TRACE_DT: 6. Expiry before saving to DB during initial exchange
-            print(f"TRACE_DT: User {user_id_from_state}: expiry_dt generated for saving: {expiry_dt} (type: {type(expiry_dt)}, tzinfo: {expiry_dt.tzinfo})")
+            print(f"TRACE_DT: User {user_id_from_state}: expiry_dt generated for saving: {expiry_dt} (type: {type(expiry_dt)}, tzinfo: {expiry_dt.tzinfo}, id_tzinfo: {id(expiry_dt.tzinfo)})")
 
             token_data_for_db = {
                 "access_token": token_data_from_google['access_token'],
