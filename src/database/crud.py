@@ -33,30 +33,35 @@ def get_google_credentials_by_user_id(db: Session, user_id: int) -> models.Googl
 def save_google_credentials(
     db: Session,
     user_id: int,
-    token_data: dict
+    token_data: dict # This dict should contain 'access_token', 'refresh_token', 'expiry', etc.
 ) -> models.GoogleCredentials:
+    """
+    Saves or updates Google credentials for a user.
+    'token_data' should be a dictionary containing the full set of token info
+    (access_token, refresh_token, expiry, scopes, etc.).
+    """
     db_creds = get_google_credentials_by_user_id(db, user_id)
     
-    token_val = token_data.get('token')
-    if isinstance(token_val, dict):
-        token_to_save = json.dumps(token_val)
-    else:
-        token_to_save = token_val
-
+    # Store the entire token_data dictionary as a JSON string
+    token_json_to_save = json.dumps(token_data) # <-- THE FIX: Always dump the whole dict
+    
+    # For scopes, ensure it's a comma-separated string if it comes as a list
     scopes_str = ','.join(token_data.get('scopes', [])) if isinstance(token_data.get('scopes'), list) else token_data.get('scopes', '')
 
     if db_creds:
-        db_creds.token = token_to_save
-        db_creds.refresh_token = token_data.get('refresh_token')
+        # Update existing credentials
+        db_creds.token = token_json_to_save
+        db_creds.refresh_token = token_data.get('refresh_token') # refresh_token can be None initially
         db_creds.token_uri = token_data.get('token_uri')
         db_creds.client_id = token_data.get('client_id')
         db_creds.client_secret = token_data.get('client_secret')
         db_creds.scopes = scopes_str
-        db_creds.expiry = token_data.get('expiry')
+        db_creds.expiry = token_data.get('expiry') # This expects a datetime object
     else:
+        # Create new credentials
         db_creds = models.GoogleCredentials(
             user_id=user_id,
-            token=token_to_save,
+            token=token_json_to_save,
             refresh_token=token_data.get('refresh_token'),
             token_uri=token_data.get('token_uri'),
             client_id=token_data.get('client_id'),
@@ -77,7 +82,6 @@ def delete_google_credentials_by_user_id(db: Session, user_id: int) -> bool:
         db.commit()
         return True
     return False
-
 # --- NEW: OAuth State CRUD Functions ---
 
 def create_oauth_state(db: Session, user_id: int) -> models.OAuthState:

@@ -1,19 +1,16 @@
 import os.path
 import json
-from datetime import datetime, timezone
-import httpx # <-- NEW IMPORT: For making HTTP requests directly
+from datetime import datetime, timedelta, timezone # <-- Added timedelta for expiry calculation
+import httpx
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow # We still need Flow for get_google_auth_url
+from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
-from datetime import timedelta
+
 from src.core import config
 from src.database import crud, database
 from src.database import models
-
-# functools.partial is no longer needed
-# from functools import partial 
 
 SCOPES = [
     "https://www.googleapis.com/auth/calendar",
@@ -29,13 +26,19 @@ def build_google_service(service_name: str, version: str, user_id: int):
         if not db_creds:
             raise Exception(f"No Google credentials found for user ID {user_id}. Please link your Google account.")
 
-        creds_dict = json.loads(db_creds.token)
-        creds_dict['token'] = creds_dict.get('access_token', creds_dict.get('token'))
-
-        if isinstance(creds_dict.get('expiry'), str):
-            creds_dict['expiry'] = datetime.fromisoformat(creds_dict['expiry'])
-
-        creds = Credentials.from_authorized_user_info(creds_dict, SCOPES)
+        # Assume db_creds.token is always a JSON string representing the token data
+        creds_json = json.loads(db_creds.token)
+        
+        creds = Credentials(
+            token=creds_json['access_token'], # Extract access_token from the stored JSON
+            refresh_token=creds_json.get('refresh_token'),
+            token_uri=creds_json.get('token_uri'),
+            client_id=creds_json.get('client_id'),
+            client_secret=creds_json.get('client_secret'),
+            scopes=creds_json.get('scopes', []),
+            # Ensure expiry is a datetime object
+            expiry=datetime.fromisoformat(creds_json['expiry']) if isinstance(creds_json.get('expiry'), str) else creds_json.get('expiry')
+        )
 
         if not creds.valid and creds.refresh_token:
             print(f"DEBUG: Refreshing Google token for user {user_id}...")
@@ -47,8 +50,9 @@ def build_google_service(service_name: str, version: str, user_id: int):
             except Exception as e:
                 raise Exception(f"Failed to refresh Google token for user {user_id}: {e}")
 
+            # Prepare token data for storage: ALWAYS as a dictionary for consistency
             updated_token_data = {
-                "token": creds.token,
+                "access_token": creds.token, # Store actual access token as a field in dict
                 "refresh_token": creds.refresh_token,
                 "token_uri": creds.token_uri,
                 "client_id": creds.client_id,
@@ -110,10 +114,9 @@ async def exchange_code_for_token(auth_code: str, state: str) -> models.GoogleCr
         if not all([config.GOOGLE_CLIENT_ID, config.GOOGLE_CLIENT_SECRET, config.GOOGLE_REDIRECT_URI]):
             raise Exception("Google OAuth environment variables (CLIENT_ID, CLIENT_SECRET, REDIRECT_URI) are not set.")
 
-        # --- THE FIX: MANUAL TOKEN EXCHANGE WITH HTTX ---
         async with httpx.AsyncClient() as client:
             token_response = await client.post(
-                "https://oauth2.googleapis.com/token", # Google's token endpoint
+                "https://oauth2.googleapis.com/token",
                 data={
                     "code": auth_code,
                     "client_id": config.GOOGLE_CLIENT_ID,
@@ -122,32 +125,19 @@ async def exchange_code_for_token(auth_code: str, state: str) -> models.GoogleCr
                     "grant_type": "authorization_code"
                 }
             )
-            token_response.raise_for_status() # Raise an exception for 4xx/5xx responses
-            token_data = token_response.json()
+            token_response.raise_for_status()
+            token_data_from_google = token_response.json() # This is the raw dict from Google
             
-            # Extract credentials from the response
-            # httpx will perform this in the main async loop, no need for run_in_executor
-            # No need for google_auth_oauthlib.flow.Flow.fetch_token()
-            creds = Credentials(
-                token=token_data['access_token'],
-                refresh_token=token_data.get('refresh_token'),
-                token_uri="https://oauth2.googleapis.com/token", # Standard token URI
-                client_id=config.GOOGLE_CLIENT_ID,
-                client_secret=config.GOOGLE_CLIENT_SECRET,
-                scopes=token_data.get('scope', '').split(' '), # Convert space-separated string to list
-                expiry=datetime.now(timezone.utc) + timedelta(seconds=token_data.get('expires_in', 3600)) # Calculate expiry
-            )
-        # --- END OF FIX ---
-        
-        token_data_for_db = {
-            "token": creds.token, # Access token string
-            "refresh_token": creds.refresh_token,
-            "token_uri": creds.token_uri,
-            "client_id": creds.client_id,
-            "client_secret": creds.client_secret,
-            "scopes": creds.scopes, # List of scopes
-            "expiry": creds.expiry.astimezone(timezone.utc) if creds.expiry else None
-        }
+            # Prepare token data for storage: ALWAYS as a dictionary for consistency
+            token_data_for_db = {
+                "access_token": token_data_from_google['access_token'],
+                "refresh_token": token_data_from_google.get('refresh_token'),
+                "token_uri": "https://oauth2.googleapis.com/token", # Standard Google token URI
+                "client_id": config.GOOGLE_CLIENT_ID,
+                "client_secret": config.GOOGLE_CLIENT_SECRET,
+                "scopes": token_data_from_google.get('scope', '').split(' '), # Convert space-separated string to list
+                "expiry": datetime.now(timezone.utc) + timedelta(seconds=token_data_from_google.get('expires_in', 3600)) # Calculate expiry
+            }
         
         db_creds = crud.save_google_credentials(db, user_id_from_state, token_data_for_db)
         print(f"DEBUG: Google credentials saved for user {user_id_from_state}.")
@@ -161,6 +151,3 @@ async def exchange_code_for_token(auth_code: str, state: str) -> models.GoogleCr
         raise
     finally:
         db.close()
-
-# asyncio is no longer directly imported here as httpx is async native.
-# import asyncio 

@@ -2,27 +2,26 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
-from datetime import timedelta, datetime # <-- NEW IMPORT: datetime for expiry check
-import json # <-- NEW IMPORT: for parsing JSON token data
+from datetime import timedelta, datetime
+import json # <-- Ensure this import is here
 
 from src.database import crud, database, models
 from src.database.database import get_db
 from src.core import security
 from src.core import config
-from src.core import gcp_auth # For Google auth flow logic
+from src.core import gcp_auth
 
 from src.database.models import UserCreate, UserResponse, Token, TokenData
 from src.api.dependencies import get_current_user
 
-# Import Credentials specifically for build_google_service if needed, but it's handled in gcp_auth.py
-from google.oauth2.credentials import Credentials # <-- NEW IMPORT
+from google.oauth2.credentials import Credentials
 
 router = APIRouter(
     prefix="/auth",
     tags=["Authentication"]
 )
 
-# --- Endpoint for User Registration ---
+# ... (register_user and login_for_access_token are unchanged) ...
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register_user(user: UserCreate, db: Session = Depends(get_db)):
     print(f"API: Received registration request for email: {user.email}")
@@ -36,7 +35,6 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
     print(f"API: User registered successfully: {new_user.email}")
     return new_user
 
-# --- Endpoint for User Login and Token Generation ---
 @router.post("/token", response_model=Token)
 def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -57,17 +55,13 @@ def login_for_access_token(
     print(f"API: User logged in, token issued for: {user.email}")
     return {"access_token": access_token, "token_type": "bearer"}
 
-# --- Google OAuth Endpoints ---
 
+# ... (google_login and google_callback are unchanged) ...
 @router.get("/google/login", status_code=status.HTTP_302_FOUND, response_class=RedirectResponse)
 async def google_login(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Initiates the Google OAuth 2.0 login flow for the authenticated AIBuddies user.
-    Redirects the user to Google's authorization page.
-    """
     print(f"API: Initiating Google OAuth for AIBuddies user ID: {current_user.id}")
     oauth_state_obj = crud.create_oauth_state(db, user_id=current_user.id)
     state_value_for_google = oauth_state_obj.state_value
@@ -85,10 +79,6 @@ async def google_callback(
     scope: str = Query(..., description="Scopes granted by the user (space-separated)"),
     db: Session = Depends(get_db)
 ):
-    """
-    Handles the callback from Google after user authorization.
-    Exchanges the authorization code for access and refresh tokens, and saves them.
-    """
     print(f"API: Google OAuth callback received. State: {state}, Code: {code}")
 
     try:
@@ -104,7 +94,7 @@ async def google_callback(
             detail=f"Failed to exchange Google authorization code: {e}"
         )
 
-# --- NEW: Google Credential Status Endpoint ---
+# --- Google Credential Status Endpoint (UPDATED) ---
 @router.get("/google/status")
 async def google_status(
     current_user: models.User = Depends(get_current_user),
@@ -119,16 +109,21 @@ async def google_status(
     if not db_creds:
         return {"status": "not_connected", "detail": "Google account not linked."}
     
-    # Reconstruct Credentials object to check validity
     try:
-        creds_dict = json.loads(db_creds.token)
-        creds_dict['token'] = creds_dict.get('access_token', creds_dict.get('token'))
-        if isinstance(creds_dict.get('expiry'), str):
-            creds_dict['expiry'] = datetime.fromisoformat(creds_dict['expiry'])
+        # Load the stored token string as a JSON dictionary
+        token_data_from_db = json.loads(db_creds.token) # <-- THE FIX: Load as JSON
         
-        # We need the full scopes list to properly validate credentials object.
-        # It's safest to use the SCOPES defined in gcp_auth.py.
-        creds = Credentials.from_authorized_user_info(creds_dict, gcp_auth.SCOPES)
+        # Reconstruct Credentials object from the loaded dictionary
+        creds = Credentials(
+            token=token_data_from_db['access_token'],
+            refresh_token=token_data_from_db.get('refresh_token'),
+            token_uri=token_data_from_db.get('token_uri'),
+            client_id=token_data_from_db.get('client_id'),
+            client_secret=token_data_from_db.get('client_secret'),
+            scopes=token_data_from_db.get('scopes', gcp_auth.SCOPES), # Use scopes from DB if available, else default
+            # Ensure expiry is a datetime object
+            expiry=datetime.fromisoformat(token_data_from_db['expiry']) if isinstance(token_data_from_db.get('expiry'), str) else token_data_from_db.get('expiry')
+        )
         
         is_valid = creds.valid
         expiry_info = creds.expiry.isoformat() if creds.expiry else "N/A"
@@ -138,7 +133,7 @@ async def google_status(
             "detail": "Google account linked and credentials are valid (or refreshed).",
             "is_token_valid": is_valid,
             "expiry": expiry_info,
-            "scopes": db_creds.scopes.split(',') if db_creds.scopes else [] # Ensure scopes is a list
+            "scopes": db_creds.scopes.split(',') if db_creds.scopes else []
         }
     except Exception as e:
         print(f"ERROR: Failed to verify Google credentials for user {current_user.id}: {e}")
