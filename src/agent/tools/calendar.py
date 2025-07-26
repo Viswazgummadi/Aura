@@ -9,11 +9,12 @@ from src.core.utils import to_rfc3339 # <-- NEW IMPORT
 def fetch_upcoming_events(user_id: int, max_results: int = 5) -> list:
     print(f"TOOL: fetch_upcoming_events called for user ID: {user_id}")
     print(f"DEBUG: now_utc = {now_utc}, tzinfo = {now_utc.tzinfo}, aware = {now_utc.tzinfo is not None}")
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+
     try:
         service = build_google_service('calendar', 'v3', user_id=user_id)
         
         # Get current time as timezone-aware UTC datetime
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
         
         # Convert to RFC 3339 string for the API call
         time_min_rfc3339 = to_rfc3339(now_utc) # <-- FIX: Use new utility function
