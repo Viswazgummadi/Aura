@@ -1,10 +1,11 @@
 from fastapi import FastAPI
 from src.database.database import create_database_and_tables
 
-# Import all your routers here
 from .routers import tasks
 from .routers import notes
-from .routers import auth # <-- NEW IMPORT for auth router
+from .routers import auth
+from .routers import calendar # <-- NEW IMPORT
+from .routers import gmail    # <-- NEW IMPORT
 
 # --- Main FastAPI Application Instance ---
 app = FastAPI(
@@ -21,10 +22,11 @@ def on_startup():
 # --- Include Routers ---
 app.include_router(tasks.router)
 app.include_router(notes.router)
-app.include_router(auth.router) # <-- NEW INCLUDE for auth router
+app.include_router(auth.router)
+app.include_router(calendar.router) # <-- NEW INCLUDE
+app.include_router(gmail.router)    # <-- NEW INCLUDE
 
 # --- Root Endpoint ---
 @app.get("/", tags=["Root"])
 def read_root():
-    """A welcome message for the API root."""
     return {"message": "Welcome to the AIBuddies API! Visit /docs for documentation."}

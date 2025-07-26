@@ -21,7 +21,10 @@ if not GOOGLE_API_KEY:
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
-
+GCP_PROJECT_ID=os.getenv("GCP_PROJECT_ID")
+GCP_PUBSUB_TOPIC_ID=os.getenv("GCP_PUBSUB_TOPIC_ID")
+if not all([GCP_PROJECT_ID, GCP_PUBSUB_TOPIC_ID]):
+    print("WARNING: GCP_PROJECT_ID or GCP_PUBSUB_TOPIC_ID not found in .env. Gmail Watcher may not work.")
 if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI]):
     print("CRITICAL WARNING: Google OAuth Client ID, Client Secret, or Redirect URI not found in .env. Google OAuth will not work.")
 class DateTimeEncoder(json.JSONEncoder):
