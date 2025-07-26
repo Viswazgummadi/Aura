@@ -6,11 +6,10 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from . import models
-from src.core.security import get_password_hash # For hashing user passwords
-import secrets # <-- NEW IMPORT: For generating secure random strings (for state)
+from src.core.security import get_password_hash
+from src.core.config import DateTimeEncoder # <-- NEW IMPORT: Our custom JSON encoder
 
-# --- User CRUD Functions (existing) ---
-# ... (no changes in this section) ...
+# --- User CRUD Functions (existing, no changes) ---
 def get_user_by_email(db: Session, email: str) -> models.User | None:
     return db.query(models.User).filter(models.User.email == email).first()
 
@@ -25,25 +24,25 @@ def create_user(db: Session, email: str, password: str) -> models.User:
     db.refresh(db_user)
     return db_user
 
-# --- Google Credentials CRUD Functions (existing) ---
-# ... (no changes in this section) ...
+# --- Google Credentials CRUD Functions (UPDATED) ---
+
 def get_google_credentials_by_user_id(db: Session, user_id: int) -> models.GoogleCredentials | None:
     return db.query(models.GoogleCredentials).filter(models.GoogleCredentials.user_id == user_id).first()
 
 def save_google_credentials(
     db: Session,
     user_id: int,
-    token_data: dict # This dict should contain 'access_token', 'refresh_token', 'expiry', etc.
+    token_data: dict # This dict should contain 'access_token', 'refresh_token', 'expiry' (as datetime object!), etc.
 ) -> models.GoogleCredentials:
     """
     Saves or updates Google credentials for a user.
-    'token_data' should be a dictionary containing the full set of token info
-    (access_token, refresh_token, expiry, scopes, etc.).
+    'token_data' should be a dictionary containing the full set of token info.
+    The expiry field in token_data MUST be a datetime object.
     """
     db_creds = get_google_credentials_by_user_id(db, user_id)
     
-    # Store the entire token_data dictionary as a JSON string
-    token_json_to_save = json.dumps(token_data) # <-- THE FIX: Always dump the whole dict
+    # Store the entire token_data dictionary as a JSON string using our custom encoder
+    token_json_to_save = json.dumps(token_data, cls=DateTimeEncoder) # <-- THE FIX IS HERE: Use custom encoder
     
     # For scopes, ensure it's a comma-separated string if it comes as a list
     scopes_str = ','.join(token_data.get('scopes', [])) if isinstance(token_data.get('scopes'), list) else token_data.get('scopes', '')
@@ -56,7 +55,7 @@ def save_google_credentials(
         db_creds.client_id = token_data.get('client_id')
         db_creds.client_secret = token_data.get('client_secret')
         db_creds.scopes = scopes_str
-        db_creds.expiry = token_data.get('expiry') # This expects a datetime object
+        db_creds.expiry = token_data.get('expiry') # This expects a datetime object (from gcp_auth.py)
     else:
         # Create new credentials
         db_creds = models.GoogleCredentials(
@@ -82,13 +81,10 @@ def delete_google_credentials_by_user_id(db: Session, user_id: int) -> bool:
         db.commit()
         return True
     return False
-# --- NEW: OAuth State CRUD Functions ---
 
+# --- NEW: OAuth State CRUD Functions (existing, no changes) ---
 def create_oauth_state(db: Session, user_id: int) -> models.OAuthState:
-    """
-    Generates and saves a unique, secure state for an OAuth flow.
-    """
-    state_value = secrets.token_urlsafe(32) # Generate a random URL-safe string
+    state_value = secrets.token_urlsafe(32)
     db_oauth_state = models.OAuthState(user_id=user_id, state_value=state_value)
     db.add(db_oauth_state)
     db.commit()
@@ -96,15 +92,9 @@ def create_oauth_state(db: Session, user_id: int) -> models.OAuthState:
     return db_oauth_state
 
 def get_oauth_state_by_value(db: Session, state_value: str) -> models.OAuthState | None:
-    """
-    Retrieves an OAuth state by its unique value.
-    """
     return db.query(models.OAuthState).filter(models.OAuthState.state_value == state_value).first()
 
 def delete_oauth_state(db: Session, state_value: str) -> bool:
-    """
-    Deletes an OAuth state by its unique value.
-    """
     db_oauth_state = get_oauth_state_by_value(db, state_value)
     if db_oauth_state:
         db.delete(db_oauth_state)
@@ -112,8 +102,7 @@ def delete_oauth_state(db: Session, state_value: str) -> bool:
         return True
     return False
 
-# --- Task CRUD Functions (existing) ---
-# ... (no changes in this section) ...
+# --- Task CRUD Functions (existing, no changes) ---
 def get_task_by_id(db: Session, task_id: str, user_id: int) -> models.Task | None:
     return db.query(models.Task).filter(models.Task.id == task_id, models.Task.user_id == user_id).first()
 
@@ -140,8 +129,7 @@ def update_task_status(db: Session, task_id: str, user_id: int, new_status: str)
     return db_task
 
 
-# --- Note CRUD Functions (existing) ---
-# ... (no changes in this section) ...
+# --- Note CRUD Functions (existing, no changes) ---
 def get_note_by_key(db: Session, key: str, user_id: int) -> models.Note | None:
     return db.query(models.Note).filter(models.Note.key == key.lower().strip(), models.Note.user_id == user_id).first()
 

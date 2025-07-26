@@ -1,6 +1,7 @@
 import os
+import json 
 from dotenv import load_dotenv
-
+from datetime import datetime, date
 # This line finds the .env file in your project folder and loads its contents
 load_dotenv()
 
@@ -23,3 +24,11 @@ GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
 
 if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI]):
     print("CRITICAL WARNING: Google OAuth Client ID, Client Secret, or Redirect URI not found in .env. Google OAuth will not work.")
+class DateTimeEncoder(json.JSONEncoder):
+    """
+    Custom JSON encoder that can serialize datetime and date objects to ISO 8601 strings.
+    """
+    def default(self, obj):
+        if isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        return json.JSONEncoder.default(self, obj)

@@ -26,10 +26,8 @@ def build_google_service(service_name: str, version: str, user_id: int):
         if not db_creds:
             raise Exception(f"No Google credentials found for user ID {user_id}. Please link your Google account.")
 
-        # Ensure that db_creds.token is loaded as a dictionary for processing
         creds_data_from_db = json.loads(db_creds.token)
         
-        # Reconstruct Credentials object from stored dictionary
         creds = Credentials(
             token=creds_data_from_db['access_token'],
             refresh_token=creds_data_from_db.get('refresh_token'),
@@ -37,7 +35,6 @@ def build_google_service(service_name: str, version: str, user_id: int):
             client_id=creds_data_from_db.get('client_id'),
             client_secret=creds_data_from_db.get('client_secret'),
             scopes=creds_data_from_db.get('scopes', []),
-            # Convert stored ISO string back to datetime object for Credentials
             expiry=datetime.fromisoformat(creds_data_from_db['expiry']) if isinstance(creds_data_from_db.get('expiry'), str) and creds_data_from_db.get('expiry') else None
         )
 
@@ -51,7 +48,6 @@ def build_google_service(service_name: str, version: str, user_id: int):
             except Exception as e:
                 raise Exception(f"Failed to refresh Google token for user {user_id}: {e}")
 
-            # Prepare token data for storage: ALWAYS as a dictionary with ISO formatted expiry
             updated_token_data = {
                 "access_token": creds.token,
                 "refresh_token": creds.refresh_token,
@@ -59,7 +55,7 @@ def build_google_service(service_name: str, version: str, user_id: int):
                 "client_id": creds.client_id,
                 "client_secret": creds.client_secret,
                 "scopes": creds.scopes,
-                "expiry": creds.expiry.astimezone(timezone.utc).isoformat() if creds.expiry else None # <-- CORRECT: Convert to ISO format here
+                "expiry": creds.expiry.astimezone(timezone.utc) if creds.expiry else None # Pass datetime object
             }
             crud.save_google_credentials(db, user_id, updated_token_data)
             print(f"DEBUG: Google token refreshed and saved for user {user_id}.")
@@ -129,7 +125,7 @@ async def exchange_code_for_token(auth_code: str, state: str) -> models.GoogleCr
             token_response.raise_for_status()
             token_data_from_google = token_response.json()
             
-            # Prepare token data for storage: ALWAYS as a dictionary with ISO formatted expiry
+            # Prepare token data for storage: ALWAYS as a dictionary with datetime object for expiry
             expiry_dt = datetime.now(timezone.utc) + timedelta(seconds=token_data_from_google.get('expires_in', 3600))
             token_data_for_db = {
                 "access_token": token_data_from_google['access_token'],
@@ -138,7 +134,7 @@ async def exchange_code_for_token(auth_code: str, state: str) -> models.GoogleCr
                 "client_id": config.GOOGLE_CLIENT_ID,
                 "client_secret": config.GOOGLE_CLIENT_SECRET,
                 "scopes": token_data_from_google.get('scope', '').split(' '),
-                "expiry": expiry_dt.isoformat() # <-- THE FIX: Convert to ISO string here
+                "expiry": expiry_dt # Pass datetime object
             }
         
         db_creds = crud.save_google_credentials(db, user_id_from_state, token_data_for_db)
