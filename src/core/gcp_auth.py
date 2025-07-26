@@ -1,3 +1,4 @@
+# AIBuddies/src/core/gcp_auth.py
 import os.path
 import json
 from datetime import datetime, timedelta, timezone
@@ -36,6 +37,19 @@ def build_google_service(service_name: str, version: str, user_id: int):
         expiry_str_from_db = creds_data_from_db.get('expiry')
         print(f"TRACE_DT: User {user_id}: 'expiry' string from JSON: {expiry_str_from_db} (type: {type(expiry_str_from_db)})")
         
+        # >>>>> START OF NEW DEBUGGING BLOCK <<<<<
+        # Test datetime.fromisoformat with a hardcoded, identical string from the logs
+        # This will tell us if fromisoformat is fundamentally broken in this environment
+        test_iso_string = '2025-07-26T11:14:41.636811Z' # EXACT string from your previous logs
+        try:
+            test_dt = datetime.fromisoformat(test_iso_string)
+            print(f"TRACE_DT: User {user_id}: Isolated test: '{test_iso_string}' PARSED SUCCESSFULLY: {test_dt} (tzinfo: {test_dt.tzinfo}, id_tzinfo: {id(test_dt.tzinfo)})")
+        except ValueError as ve:
+            print(f"TRACE_DT: User {user_id}: Isolated test: '{test_iso_string}' FAILED TO PARSE (ValueError): {ve}")
+        except Exception as e:
+            print(f"TRACE_DT: User {user_id}: Isolated test: '{test_iso_string}' FAILED WITH UNEXPECTED ERROR: {e}")
+        # >>>>> END OF NEW DEBUGGING BLOCK <<<<<
+
         expiry_dt_from_db = None
         if isinstance(expiry_str_from_db, str) and expiry_str_from_db:
             try:
@@ -102,8 +116,8 @@ def build_google_service(service_name: str, version: str, user_id: int):
                 "access_token": creds.token,
                 "refresh_token": creds.refresh_token,
                 "token_uri": creds.token_uri,
-                "client_id": creds.client_id,
-                "client_secret": creds.client_secret,
+                "client_id": config.GOOGLE_CLIENT_ID, # Corrected: use config.GOOGLE_CLIENT_ID
+                "client_secret": config.GOOGLE_CLIENT_SECRET, # Corrected: use config.GOOGLE_CLIENT_SECRET
                 "scopes": creds.scopes,
                 "expiry": creds.expiry.astimezone(timezone.utc).isoformat() if creds.expiry else None
             }
