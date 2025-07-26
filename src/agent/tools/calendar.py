@@ -9,30 +9,23 @@ from src.core.utils import to_rfc3339 # <-- NEW IMPORT
 def fetch_upcoming_events(user_id: int, max_results: int = 5) -> list:
     print(f"TOOL: fetch_upcoming_events called for user ID: {user_id}")
     now_utc = datetime.datetime.now(datetime.timezone.utc)
-
-    print(f"DEBUG: now_utc = {now_utc}, tzinfo = {now_utc.tzinfo}, aware = {now_utc.tzinfo is not None}")
     try:
-        service = build_google_service('calendar', 'v3', user_id=user_id)
-        
-        # Get current time as timezone-aware UTC datetime
-        
-        # Convert to RFC 3339 string for the API call
-        time_min_rfc3339 = to_rfc3339(now_utc) # <-- FIX: Use new utility function
-        
+        service = build_google_service('calendar', 'v3', user_id)
+        time_min = to_rfc3339(now_utc)
         events_result = service.events().list(
-            calendarId="primary", 
-            timeMin=time_min_rfc3339, # <-- Use RFC 3339 string
+            calendarId="primary",
+            timeMin=time_min,
             maxResults=max_results,
-            singleEvents=True, 
+            singleEvents=True,
             orderBy="startTime"
         ).execute()
         return events_result.get("items", [])
     except HttpError as error:
         print(f"An HttpError occurred in fetch_upcoming_events for user {user_id}: {error}")
-        raise error
+        raise
     except Exception as e:
         print(f"An unexpected error occurred in fetch_upcoming_events for user {user_id}: {e}")
-        raise e
+        raise
 
 def create_new_event(
     user_id: int,

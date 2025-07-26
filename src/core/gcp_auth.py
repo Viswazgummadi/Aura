@@ -25,119 +25,67 @@ def build_google_service(service_name: str, version: str, user_id: int):
     try:
         db_creds = crud.get_google_credentials_by_user_id(db, user_id)
         if not db_creds:
-            raise Exception(f"No Google credentials found for user ID {user_id}. Please link your Google account.")
+            raise Exception(f"No Google credentials found for user ID {user_id}. Link your account.")
 
-        # TRACE_DT: 1. Before JSON load from DB
-        print(f"TRACE_DT: User {user_id}: Raw token string from DB: {db_creds.token[:200]}...") # Print first 200 chars for brevity
+        token_data = json.loads(db_creds.token)
+        expiry_str = token_data.get('expiry', '')
 
-        creds_data_from_db = json.loads(db_creds.token)
-        
-        # TRACE_DT: 2. After JSON load, before parsing expiry
-        expiry_str_from_db = creds_data_from_db.get('expiry')
-        print(f"TRACE_DT: User {user_id}: 'expiry' string from JSON: {expiry_str_from_db} (type: {type(expiry_str_from_db)})")
-        
-        # --- START: MORE DETAILED STRING INSPECTION & FALLBACK PARSING ---
-        if isinstance(expiry_str_from_db, str):
-            print(f"TRACE_DT: User {user_id}: repr(expiry_str_from_db): {repr(expiry_str_from_db)}")
-            print(f"TRACE_DT: User {user_id}: len(expiry_str_from_db): {len(expiry_str_from_db)}")
-            char_codes = [str(ord(c)) for c in expiry_str_from_db]
-            print(f"TRACE_DT: User {user_id}: Char codes: {','.join(char_codes)}")
-        # --- END: MORE DETAILED STRING INSPECTION ---
-
-        expiry_dt_from_db = None
-        if isinstance(expiry_str_from_db, str) and expiry_str_from_db:
-            # First attempt with fromisoformat
+        # Parse expiry into timezone-aware datetime
+        expiry_dt = None
+        if expiry_str:
+            # Handle trailing 'Z'
+            iso_str = expiry_str.replace("Z", "+00:00")
             try:
-                expiry_dt_from_db = datetime.fromisoformat(expiry_str_from_db.replace("Z", "+00:00"))
-                print(f"TRACE_DT: User {user_id}: fromisoformat SUCCESS: {expiry_dt_from_db} (tzinfo: {expiry_dt_from_db.tzinfo}, id_tzinfo: {id(expiry_dt_from_db.tzinfo) if expiry_dt_from_db.tzinfo else 'N/A'})")
-            except ValueError as ve:
-                print(f"TRACE_DT: User {user_id}: fromisoformat FAILED (ValueError): {ve}")
-                # --- FALLBACK TO STRPTIME ---
-                # Pattern for 'YYYY-MM-DDTHH:MM:SS.ffffffZ'
-                # Remove 'Z' for strptime, then add UTC tzinfo
-                if expiry_str_from_db.endswith('Z'):
-                    strptime_string = expiry_str_from_db[:-1]
-                else:
-                    strptime_string = expiry_str_from_db
-                
-                try:
-                    expiry_dt_from_db = datetime.strptime(strptime_string, '%Y-%m-%dT%H:%M:%S.%f')
-                    # strptime returns naive, so make it aware with UTC
-                    expiry_dt_from_db = expiry_dt_from_db.replace(tzinfo=timezone.utc)
-                    print(f"TRACE_DT: User {user_id}: strptime SUCCESS (fallback): {expiry_dt_from_db} (tzinfo: {expiry_dt_from_db.tzinfo}, id_tzinfo: {id(expiry_dt_from_db.tzinfo)})")
-                except ValueError as ve_strptime:
-                    print(f"TRACE_DT: User {user_id}: strptime FAILED (ValueError): {ve_strptime}")
-                    expiry_dt_from_db = None # Both fromisoformat and strptime failed
-                except Exception as e_strptime:
-                    print(f"TRACE_DT: User {user_id}: strptime FAILED (Unexpected Error): {e_strptime}")
-                    expiry_dt_from_db = None
-                # --- END FALLBACK ---
-            except Exception as e:
-                print(f"TRACE_DT: User {user_id}: fromisoformat FAILED (Unexpected Error): {e}")
-                expiry_dt_from_db = None
-
-            # Apply timezone standardization only if successfully parsed by any method
-            if expiry_dt_from_db is not None:
-                # Ensure expiry is explicitly timezone.utc, converting if necessary
-                expiry_dt_from_db = expiry_dt_from_db.astimezone(timezone.utc).replace(tzinfo=timezone.utc)
-                print(f"TRACE_DT: User {user_id}: expiry_dt_from_db after final TZ standardization: {expiry_dt_from_db} (tzinfo: {expiry_dt_from_db.tzinfo}, id_tzinfo: {id(expiry_dt_from_db.tzinfo)})")
-        else:
-            print(f"TRACE_DT: User {user_id}: 'expiry' from DB is not a string or is empty: {expiry_str_from_db}")
-
-        # TRACE_DT: 4. Final expiry passed to Credentials constructor
-        print(f"TRACE_DT: User {user_id}: Final expiry passed to Credentials: {expiry_dt_from_db} (type: {type(expiry_dt_from_db)}, tzinfo: {expiry_dt_from_db.tzinfo if expiry_dt_from_db else 'N/A'})")
-        # Also print id of timezone.utc to compare
-        print(f"TRACE_DT: User {user_id}: ID of datetime.timezone.utc: {id(timezone.utc)}")
-
+                expiry_dt = datetime.fromisoformat(iso_str)
+            except ValueError:
+                # Fallback for microseconds
+                naiv = datetime.strptime(iso_str.rstrip("+00:00"), '%Y-%m-%dT%H:%M:%S.%f')
+                expiry_dt = naiv.replace(tzinfo=timezone.utc)
+            expiry_dt = expiry_dt.astimezone(timezone.utc).replace(tzinfo=timezone.utc)
 
         creds = Credentials(
-            token=creds_data_from_db['access_token'],
-            refresh_token=creds_data_from_db.get('refresh_token'),
-            token_uri=creds_data_from_db.get('token_uri'),
-            client_id=creds_data_from_db.get('client_id'),
-            client_secret=creds_data_from_db.get('client_secret'),
-            scopes=creds_data_from_db.get('scopes', []),
-            expiry=expiry_dt_from_db
+            token=token_data['access_token'],
+            refresh_token=token_data.get('refresh_token'),
+            token_uri=token_data.get('token_uri'),
+            client_id=token_data.get('client_id'),
+            client_secret=token_data.get('client_secret'),
+            scopes=token_data.get('scopes', []),
+            expiry=expiry_dt
         )
-        
-        # TRACE_DT: 5. Before creds.valid check
-        current_time_utc = datetime.now(timezone.utc)
-        if not creds.expiry:
-            raise Exception("Google credential expiry is missing or failed to parse.")
-        print(f"DEBUG: creds.expiry = {creds.expiry}, tzinfo = {creds.expiry.tzinfo}")
 
-        print(f"TRACE_DT: User {user_id}: Creds object expiry: {creds.expiry} (type: {type(creds.expiry)}, tzinfo: {creds.expiry.tzinfo}, id_tzinfo: {id(creds.expiry.tzinfo) if creds.expiry else 'N/A'})")
-        print(f"TRACE_DT: User {user_id}: Current time (UTC): {current_time_utc} (type: {type(current_time_utc)}, tzinfo: {current_time_utc.tzinfo}, id_tzinfo: {id(current_time_utc.tzinfo)})")
-        # Now, for good measure, we'll explicitly try a comparison with `is` for tzinfo objects
-        if creds.expiry and current_time_utc:
-            print(f"TRACE_DT: User {user_id}: Are tzinfo objects IDENTICAL? {creds.expiry.tzinfo is current_time_utc.tzinfo}")
+        # Manual UTC-aware expiry check
+        now_utc = datetime.now(timezone.utc)
+        is_expired = False
+        if creds.expiry:
+            exp = creds.expiry
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            else:
+                exp = exp.astimezone(timezone.utc)
+            is_expired = now_utc >= exp
 
+        # Refresh if expired
+        if is_expired:
+            if not creds.refresh_token:
+                raise Exception("Google credentials expired and cannot be refreshed. Please re-authenticate.")
+            creds.client_id = config.GOOGLE_CLIENT_ID
+            creds.client_secret = config.GOOGLE_CLIENT_SECRET
+            creds.refresh(Request())
 
-        if not creds.valid and creds.refresh_token:
-            print(f"DEBUG: Refreshing Google token for user {user_id}...")
-            creds.client_id = db_creds.client_id
-            creds.client_secret = db_creds.client_secret
-            
-            try:
-                creds.refresh(Request())
-            except Exception as e:
-                raise Exception(f"Failed to refresh Google token for user {user_id}: {e}")
-
-            updated_token_data = {
+            # Save refreshed credentials with RFC3339 expiry
+            updated = {
                 "access_token": creds.token,
                 "refresh_token": creds.refresh_token,
                 "token_uri": creds.token_uri,
-                "client_id": config.GOOGLE_CLIENT_ID, # Corrected: use config.GOOGLE_CLIENT_ID
-                "client_secret": config.GOOGLE_CLIENT_SECRET, # Corrected: use config.GOOGLE_CLIENT_SECRET
+                "client_id": config.GOOGLE_CLIENT_ID,
+                "client_secret": config.GOOGLE_CLIENT_SECRET,
                 "scopes": creds.scopes,
-                "expiry": creds.expiry.astimezone(timezone.utc).isoformat() if creds.expiry else None
+                "expiry": to_rfc3339(creds.expiry)
             }
-            crud.save_google_credentials(db, user_id, updated_token_data) 
-            print(f"DEBUG: Google token refreshed and saved for user {user_id}.")
-        elif not creds.valid and not creds.refresh_token:
-             raise Exception(f"Google credentials for user ID {user_id} are expired and cannot be refreshed. Please re-authenticate.")
-        
+            crud.save_google_credentials(db, user_id, updated)
+
         return build(service_name, version, credentials=creds)
+
     finally:
         db.close()
 
