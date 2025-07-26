@@ -104,6 +104,7 @@ def build_google_service(service_name: str, version: str, user_id: int):
         current_time_utc = datetime.now(timezone.utc)
         if not creds.expiry:
             raise Exception("Google credential expiry is missing or failed to parse.")
+        print(f"DEBUG: creds.expiry = {creds.expiry}, tzinfo = {creds.expiry.tzinfo}")
 
         print(f"TRACE_DT: User {user_id}: Creds object expiry: {creds.expiry} (type: {type(creds.expiry)}, tzinfo: {creds.expiry.tzinfo}, id_tzinfo: {id(creds.expiry.tzinfo) if creds.expiry else 'N/A'})")
         print(f"TRACE_DT: User {user_id}: Current time (UTC): {current_time_utc} (type: {type(current_time_utc)}, tzinfo: {current_time_utc.tzinfo}, id_tzinfo: {id(current_time_utc.tzinfo)})")
