@@ -2,7 +2,7 @@
 
 import chromadb
 import uuid
-from langchain.memory import ChatMessageHistory
+from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain.schema import BaseMessage, messages_from_dict, messages_to_dict
 from langchain_community.vectorstores import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
@@ -16,19 +16,36 @@ CHROMA_PERSIST_DIRECTORY = "./chroma_db"
 
 class MemoryManager:
     def __init__(self):
-        # Initialize the embedding model using our resilient ModelManager
-        # This ensures we are using the configured active model and a valid API key.
-        llm = model_manager.get_active_model()
-        self._embedding_model = GoogleGenerativeAIEmbeddings(model=llm.model_name)
+        """
+        Initializes the MemoryManager without loading heavy components.
+        Components will be lazy-loaded on their first use.
+        """
+        self._embedding_model = None
+        self._chroma_client = None
+
+    def _initialize_components(self):
+        """
+        A private method to initialize components on first use.
+        This prevents database calls during application startup.
+        """
+        # This function will only be called the first time a memory operation is needed.
+        if self._embedding_model is None:
+            # The database tables WILL exist by the time this is called.
+            llm = model_manager.get_active_model()
+            if not llm:
+                raise Exception("Cannot initialize memory: No active LLM found.")
+            self._embedding_model = GoogleGenerativeAIEmbeddings(model=llm.model_name)
         
-        # Initialize the ChromaDB client
-        self._chroma_client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIRECTORY)
+        if self._chroma_client is None:
+            self._chroma_client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIRECTORY)
 
     def _get_vector_store(self, user_id: int) -> Chroma:
         """
         Retrieves or creates a user-specific collection in ChromaDB.
-        This isolates each user's semantic memory.
         """
+        # Ensure components are initialized before trying to use them.
+        self._initialize_components()
+        
         collection_name = f"user_{user_id}_semantic_memory"
         return Chroma(
             client=self._chroma_client,
@@ -46,8 +63,9 @@ class MemoryManager:
         try:
             db_messages = crud.get_chat_history(db, session_id=session_id, user_id=user_id)
             # LangChain's helper functions convert our stored JSON back into message objects
+            # Note: `message.message` is accessing the 'message' column of the ChatMessage model
             dict_messages = [messages_from_dict([message.message]) for message in db_messages]
-            # Flatten the list
+            # Flatten the list of lists into a single list
             flat_messages = [item for sublist in dict_messages for item in sublist]
             return ChatMessageHistory(messages=flat_messages)
         finally:
