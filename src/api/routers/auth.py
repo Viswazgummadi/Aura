@@ -1,19 +1,29 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+# src/api/routers/auth.py
+
+# FastAPI Core Imports
+from fastapi import (
+    APIRouter, Depends, HTTPException, status, Query, WebSocket,
+    BackgroundTasks
+)
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import RedirectResponse
-from sqlalchemy.orm import Session
-from datetime import timedelta, datetime, timezone 
+
+# Python Standard Library
 import json
-from src.api.dependencies import get_current_user
+from datetime import timedelta, datetime, timezone 
+
+# SQLAlchemy
+from sqlalchemy.orm import Session
+
+# Project-specific Imports
+from src.core import config, gcp_auth, security
 from src.database import crud, database, models
 from src.database.database import get_db
-from src.core import security
-from src.core import config
-from src.core import gcp_auth
+from src.api.dependencies import get_current_user, get_current_user_from_ws
+from src.api.connection_manager import manager
 
+# Pydantic Models
 from src.database.models import UserCreate, UserResponse, Token, TokenData
-
-from google.oauth2.credentials import Credentials
 
 router = APIRouter(
     prefix="/auth",
@@ -23,6 +33,7 @@ router = APIRouter(
 # --- Endpoint for User Registration ---
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register_user(user: UserCreate, db: Session = Depends(get_db)):
+    # ... (this function is correct, no changes needed)
     print(f"API: Received registration request for email: {user.email}")
     db_user = crud.get_user_by_email(db, email=user.email)
     if db_user:
@@ -40,6 +51,7 @@ def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
+    # ... (this function is correct, no changes needed)
     user = crud.get_user_by_email(db, email=form_data.username)
     if not user or not security.verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
@@ -55,13 +67,14 @@ def login_for_access_token(
     print(f"API: User logged in, token issued for: {user.email}")
     return {"access_token": access_token, "token_type": "bearer"}
 
-# --- Google OAuth Endpoints ---
 
+# --- Google OAuth Endpoints ---
 @router.get("/google/login", status_code=status.HTTP_302_FOUND, response_class=RedirectResponse)
 async def google_login(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    # ... (this function is correct, no changes needed)
     print(f"API: Initiating Google OAuth for AIBuddies user ID: {current_user.id}")
     oauth_state_obj = crud.create_oauth_state(db, user_id=current_user.id)
     state_value_for_google = oauth_state_obj.state_value
@@ -79,6 +92,7 @@ async def google_callback(
     scope: str = Query(..., description="Scopes granted by the user (space-separated)"),
     db: Session = Depends(get_db)
 ):
+    # ... (this function is correct, no changes needed)
     print(f"API: Google OAuth callback received. State: {state}, Code: {code}")
 
     try:
@@ -94,15 +108,14 @@ async def google_callback(
             detail=f"Failed to exchange Google authorization code: {e}"
         )
 
-# --- Google Credential Status Endpoint (UPDATED) ---
+
+# --- Google Credential Status Endpoint ---
 @router.get("/google/status")
 async def google_status(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Checks the status of the authenticated user's Google account connection.
-    """
+    # ... (this function is correct, no changes needed)
     print(f"API: Checking Google status for user ID: {current_user.id}")
     db_creds = crud.get_google_credentials_by_user_id(db, current_user.id)
     
@@ -111,11 +124,7 @@ async def google_status(
     
     try:
         token_data_from_db = json.loads(db_creds.token)
-        
-        # Attempt to get expiry from token_data_from_db.
-        # It should be an ISO string if previous steps were correctly applied.
         expiry_str = token_data_from_db.get('expiry')
-        
         is_token_valid = False
         expiry_info = "N/A"
         now_utc = datetime.now(timezone.utc)
@@ -126,18 +135,14 @@ async def google_status(
             
             try:
                 creds_expiry_dt = datetime.fromisoformat(expiry_str)
-                print(f"DEBUG: creds_expiry_dt = {creds_expiry_dt}, now_utc = {now_utc}")
-            
-            except ValueError as ve:
+            except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=f"Invalid expiry datetime format: {expiry_str}"
                 )
-
-
+            
             is_token_valid = creds_expiry_dt > now_utc
             expiry_info = creds_expiry_dt.isoformat()
-
         
         return {
             "status": "connected",
@@ -148,8 +153,31 @@ async def google_status(
         }
     except Exception as e:
         print(f"ERROR: Failed to verify Google credentials for user {current_user.id}: {e}")
-        # Re-raise HTTPException to ensure it's caught by FastAPI's error handler
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to verify linked Google credentials: {e}"
         )
+
+
+# --- NEW: WebSocket Endpoint for Real-Time Notifications ---
+@router.websocket("/ws")
+async def websocket_endpoint(
+    websocket: WebSocket, # <- The fix is that WebSocket is now correctly imported
+    current_user: models.User = Depends(get_current_user_from_ws)
+):
+    """
+    Handles the persistent WebSocket connection for a logged-in user.
+    The client must connect to "wss://<your-domain>/auth/ws?token=<jwt_token>".
+    """
+    await manager.connect(current_user.id, websocket)
+    print(f"INFO: WebSocket connection established for user {current_user.id}")
+    try:
+        # This loop keeps the connection alive.
+        while True:
+            await websocket.receive_text()
+    except Exception:
+        # This block will execute when the client disconnects.
+        pass
+    finally:
+        manager.disconnect(current_user.id)
+        print(f"INFO: WebSocket connection closed for user {current_user.id}")

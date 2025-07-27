@@ -6,7 +6,7 @@ from .routers import notes
 from .routers import auth
 from .routers import calendar # <-- NEW IMPORT
 from .routers import gmail    # <-- NEW IMPORT
-
+from .routers import notifications
 # --- Main FastAPI Application Instance ---
 app = FastAPI(
     title="AIBuddies API",
@@ -25,7 +25,7 @@ app.include_router(notes.router)
 app.include_router(auth.router)
 app.include_router(calendar.router) # <-- NEW INCLUDE
 app.include_router(gmail.router)    # <-- NEW INCLUDE
-
+app.include_router(notifications.router)
 # --- Root Endpoint ---
 @app.get("/", tags=["Root"])
 def read_root():

@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status,Query
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from src.database import crud, models
@@ -52,5 +52,33 @@ async def get_current_user(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Inactive user"
         )
+    
+    return user
+
+async def get_current_user_from_ws(
+    token: str = Query(...), # The token will be passed as a query parameter
+    db: Session = Depends(get_db)
+) -> models.User:
+    """
+    Dependency for authenticating users via WebSockets.
+    The token is expected as a query parameter, e.g., "ws://.../?token=...".
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    
+    payload = security.decode_access_token(token)
+    if payload is None:
+        raise credentials_exception
+    
+    user_id: int = payload.get("user_id")
+    if user_id is None:
+        raise credentials_exception
+    
+    user = crud.get_user_by_id(db, user_id=user_id)
+    if user is None or not user.is_active:
+        raise credentials_exception
     
     return user
