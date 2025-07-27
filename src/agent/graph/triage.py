@@ -28,8 +28,22 @@ def get_triage_agent_graph():
 
         # 2. Define Prompts
         triage_prompt = ChatPromptTemplate.from_template(
-            "You are an expert email triaging assistant. Analyze the following email content and classify it according to the provided JSON schema.\n"
-            "Email Content:\n---\n{email_content}\n---"
+        """
+        You are an expert email triaging assistant. Analyze the following email content and classify it according to the provided JSON schema.
+        Your goal is to determine if an action is required and extract all necessary information for that action.
+
+        **Instructions for `extracted_entities`:**
+        - This field MUST be a dictionary.
+        - For a DEADLINE_TASK, extract the task description and due date. Example: {{"task_description": "Submit report", "due_date": "YYYY-MM-DDTHH:MM:SSZ"}}
+        - For a MEETING_REQUEST, extract the title, attendees, and proposed time. Example: {{"title": "Project Sync", "attendees": ["bob@example.com"], "proposed_time": "..."}}
+        - For other types, extract the main topic. Example: {{"topic": "Bus schedule update"}}
+        - If no specific entities can be extracted, provide an empty dictionary: {{}}
+
+        Email Content:
+        ---
+        {email_content}
+        ---
+        """
         )
         planning_prompt_template = ChatPromptTemplate.from_template(
             "You are an expert planning agent. Based on the triage of an email, choose the single best tool to call.\n"
