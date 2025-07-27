@@ -359,11 +359,13 @@ def get_active_llm_model(db: Session) -> models.LLMModel | None:
     """Retrieves the currently active LLM for the agent to use."""
     return db.query(models.LLMModel).filter(models.LLMModel.is_active == True).first()
 
-def add_chat_message(db: Session, session_id: str, message_json: str, user_id: int) -> models.ChatMessage:
+def add_chat_message(db: Session, session_id: str, message_json_dict: dict, user_id: int) -> models.ChatMessage:
     """Adds a new chat message to the database."""
     db_message = models.ChatMessage(
         session_id=session_id,
-        message=message_json,
+        # --- THIS IS THE FIX ---
+        # Convert the dictionary to a JSON string before saving
+        message=json.dumps(message_json_dict),
         user_id=user_id
     )
     db.add(db_message)

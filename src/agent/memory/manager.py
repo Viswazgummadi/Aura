@@ -6,7 +6,7 @@ from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain.schema import BaseMessage, messages_from_dict, messages_to_dict
 from langchain_community.vectorstores import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-
+import json
 from src.core.model_manager import model_manager
 from src.database import crud, database
 
@@ -74,9 +74,12 @@ class MemoryManager:
         db = database.SessionLocal()
         try:
             db_messages = crud.get_chat_history(db, session_id=session_id, user_id=user_id)
-            # LangChain's helper functions convert our stored JSON back into message objects
-            # Note: `message.message` is accessing the 'message' column of the ChatMessage model
-            dict_messages = [messages_from_dict([message.message]) for message in db_messages]
+            
+            # --- THIS IS THE FIX ---
+            # 1. Parse the JSON string from the DB back into a dictionary
+            # 2. Then convert the dictionary into a LangChain message object
+            dict_messages = [messages_from_dict([json.loads(message.message)]) for message in db_messages]
+            
             # Flatten the list of lists into a single list
             flat_messages = [item for sublist in dict_messages for item in sublist]
             return ChatMessageHistory(messages=flat_messages)
@@ -89,10 +92,9 @@ class MemoryManager:
         """
         db = database.SessionLocal()
         try:
-            # Convert the LangChain message object to a JSON-serializable dictionary
             dict_message = messages_to_dict([message])
-            # The result is a list with one item, we take the first
-            crud.add_chat_message(db, session_id=session_id, message_json=dict_message[0], user_id=user_id)
+            # Pass the dictionary to the crud function
+            crud.add_chat_message(db, session_id=session_id, message_json_dict=dict_message[0], user_id=user_id)
         finally:
             db.close()
 
