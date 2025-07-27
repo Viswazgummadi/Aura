@@ -7,7 +7,7 @@ from langgraph.graph import StateGraph, END
 from src.agent.graph.state import TriageState, TriageResult
 from src.core.model_manager import model_manager
 # We need to import the tools to execute them
-from src.agent.tools import all_tools
+from src.agent.graph.builder  import all_tools
 from langchain.tools.render import render_text_description
 
 # 1. Initialize the LLM and bind it to our TriageResult schema
