@@ -217,7 +217,7 @@ def _fetch_unread_and_get_history_id_fallback(service, user_id: int) -> tuple[li
     highest_history_id_in_fetch = 0
 
     print(f"DEBUG: Performing unread list sync as fallback for user {user_id}.")
-    unread_messages_list = _fetch_messages_from_list_api(service, user_id, label_ids=['INBOX', 'UNREAD'], max_results=50) 
+    unread_messages_list = _fetch_messages_from_list_api(service, user_id, label_ids=['INBOX', 'UNREAD'], max_results=6) 
     
     for msg_summary in unread_messages_list:
         metadata = _get_message_metadata(msg_summary['id'], service, user_id)
