@@ -128,7 +128,22 @@ def update_task_status(db: Session, task_id: str, user_id: int, new_status: str)
         db.refresh(db_task)
     return db_task
 
+def delete_task_by_id(db: Session, task_id: str, user_id: int) -> bool:
+    """
+    Deletes a task from the database by its ID, ensuring it belongs to the user.
 
+    Returns:
+        True if the task was found and deleted, False otherwise.
+    """
+    # First, get the task to make sure it exists and belongs to the user
+    db_task = get_task_by_id(db, task_id=task_id, user_id=user_id)
+    
+    if db_task:
+        db.delete(db_task)
+        db.commit()
+        return True
+        
+    return False
 # --- Note CRUD Functions (existing, no changes) ---
 def get_note_by_key(db: Session, key: str, user_id: int) -> models.Note | None:
     return db.query(models.Note).filter(models.Note.key == key.lower().strip(), models.Note.user_id == user_id).first()

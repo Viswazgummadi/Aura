@@ -62,3 +62,26 @@ def complete_task(
             detail=f"Task with ID '{task_id}' not found for user {current_user.id}." # More specific error message
         )
     return updated_task
+@router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_task(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Delete an existing task for the authenticated user.
+    """
+    print(f"API: Received request to delete task {task_id} for user ID: {current_user.id}")
+    
+    # Call the new CRUD function
+    deleted = crud.delete_task_by_id(db=db, task_id=task_id, user_id=current_user.id)
+    
+    # If the delete operation returned False, it means the task was not found
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Task with ID '{task_id}' not found for this user."
+        )
+    
+    # If successful, FastAPI will automatically return a 204 No Content response
+    return
