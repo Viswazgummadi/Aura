@@ -19,6 +19,7 @@ note_tag_association_table = Table(
     Column("note_id", Integer, ForeignKey("notes.id"), primary_key=True),
     Column("tag_id", Integer, ForeignKey("tags.id"), primary_key=True),
 )
+
 class Tag(Base):
     __tablename__ = "tags"
 
@@ -32,6 +33,31 @@ class Tag(Base):
 
     def __repr__(self):
         return f"<Tag(id={self.id}, name='{self.name}')>"
+    
+class LLMProvider(Base):
+    __tablename__ = "llm_providers"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, unique=True, index=True, nullable=False) # e.g., "google", "openai"
+    api_keys = relationship("APIKey", back_populates="provider")
+    models = relationship("LLMModel", back_populates="provider")
+
+class LLMModel(Base):
+    __tablename__ = "llm_models"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, unique=True, index=True, nullable=False) # e.g., "gemini-1.5-flash", "gpt-4o"
+    is_active = Column(Boolean, default=False, index=True) # Only one model should be active at a time
+    provider_id = Column(Integer, ForeignKey("llm_providers.id"))
+    provider = relationship("LLMProvider", back_populates="models")
+
+class APIKey(Base):
+    __tablename__ = "api_keys"
+    id = Column(Integer, primary_key=True)
+    key = Column(String, unique=True, nullable=False) # The actual API key
+    is_active = Column(Boolean, default=True)
+    last_used = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc))
+    provider_id = Column(Integer, ForeignKey("llm_providers.id"))
+    provider = relationship("LLMProvider", back_populates="api_keys")
+
 # --- SQLAlchemy ORM Table Model Definitions (existing, no changes) ---
 class User(Base):
     __tablename__ = "users"
@@ -157,7 +183,47 @@ class TaskResponse(TaskBase):
 
     class Config:
         from_attributes = True
-        
+class APIKeyBase(BaseModel):
+    key: str
+
+class APIKeyCreate(APIKeyBase):
+    pass
+
+class APIKeyResponse(APIKeyBase):
+    id: int
+    is_active: bool
+    last_used: datetime.datetime
+    provider_id: int
+    
+    class Config:
+        from_attributes = True
+
+class LLMModelBase(BaseModel):
+    name: str
+
+class LLMModelCreate(LLMModelBase):
+    pass
+
+class LLMModelResponse(LLMModelBase):
+    id: int
+    is_active: bool
+    provider_id: int
+    
+    class Config:
+        from_attributes = True
+
+class LLMProviderBase(BaseModel):
+    name: str
+
+class LLMProviderCreate(LLMProviderBase):
+    pass
+
+class LLMProviderResponse(LLMProviderBase):
+    id: int
+    models: List[LLMModelResponse] = []
+    
+    class Config:
+        from_attributes = True
 # --- NEW: Pydantic Schemas for Tag ---
 class TagBase(BaseModel):
     name: str

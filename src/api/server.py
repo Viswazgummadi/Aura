@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from src.database.database import create_database_and_tables
-
+from .routers import admin
 from .routers import tasks
 from .routers import notes
 from .routers import auth
@@ -27,6 +27,7 @@ app.include_router(calendar.router) # <-- NEW INCLUDE
 app.include_router(gmail.router)    # <-- NEW INCLUDE
 app.include_router(notifications.router)
 app.include_router(notes.router_tags)
+app.include_router(admin.router)
 # --- Root Endpoint ---
 @app.get("/", tags=["Root"])
 def read_root():

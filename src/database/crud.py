@@ -272,3 +272,89 @@ def get_notes_by_tag_name(db: Session, tag_name: str, user_id: int) -> list[mode
         .filter(models.Tag.name == normalized_name, models.Note.user_id == user_id)
         .all()
     )
+def get_or_create_provider(db: Session, provider_name: str) -> models.LLMProvider:
+    provider = db.query(models.LLMProvider).filter(models.LLMProvider.name == provider_name.lower()).first()
+    if not provider:
+        provider = models.LLMProvider(name=provider_name.lower())
+        db.add(provider)
+        db.commit()
+        db.refresh(provider)
+    return provider
+
+def get_provider_by_name(db: Session, provider_name: str) -> models.LLMProvider | None:
+    return db.query(models.LLMProvider).filter(models.LLMProvider.name == provider_name.lower()).first()
+
+# --- API Key Functions ---
+def add_api_key(db: Session, provider_name: str, key: str) -> models.APIKey:
+    provider = get_or_create_provider(db, provider_name)
+    db_key = models.APIKey(key=key, provider_id=provider.id)
+    db.add(db_key)
+    db.commit()
+    db.refresh(db_key)
+    return db_key
+
+def get_next_api_key(db: Session, provider_name: str) -> models.APIKey | None:
+    """
+    This is the core logic for key rotation. It fetches the least recently used,
+    active key for a given provider, and updates its last_used timestamp.
+    This ensures we cycle through keys, distributing the load.
+    """
+    provider = get_provider_by_name(db, provider_name)
+    if not provider:
+        return None
+        
+    # Find the active key that was used the longest time ago
+    db_key = (
+        db.query(models.APIKey)
+        .filter(models.APIKey.provider_id == provider.id, models.APIKey.is_active == True)
+        .order_by(models.APIKey.last_used.asc())
+        .first()
+    )
+    
+    if db_key:
+        # Update its timestamp to now, so it goes to the back of the line
+        db_key.last_used = datetime.datetime.now(datetime.timezone.utc)
+        db.commit()
+        db.refresh(db_key)
+        
+    return db_key
+
+def deactivate_api_key(db: Session, key_id: int) -> models.APIKey | None:
+    db_key = db.query(models.APIKey).filter(models.APIKey.id == key_id).first()
+    if db_key:
+        db_key.is_active = False
+        db.commit()
+        db.refresh(db_key)
+    return db_key
+
+# --- LLM Model Functions ---
+def add_llm_model(db: Session, provider_name: str, model_name: str) -> models.LLMModel:
+    provider = get_or_create_provider(db, provider_name)
+    db_model = models.LLMModel(name=model_name, provider_id=provider.id)
+    db.add(db_model)
+    db.commit()
+    db.refresh(db_model)
+    return db_model
+
+def set_active_llm_model(db: Session, model_name: str) -> models.LLMModel | None:
+    """
+    Sets a specific model as active and deactivates all other models.
+    Ensures that only one model is the "default" for the agent.
+    """
+    # First, deactivate all models
+    db.query(models.LLMModel).update({"is_active": False})
+    
+    # Then, find and activate the desired model
+    db_model = db.query(models.LLMModel).filter(models.LLMModel.name == model_name).first()
+    if db_model:
+        db_model.is_active = True
+        db.commit()
+        db.refresh(db_model)
+    else:
+        # If the model wasn't found, roll back the deactivation
+        db.rollback()
+    return db_model
+
+def get_active_llm_model(db: Session) -> models.LLMModel | None:
+    """Retrieves the currently active LLM for the agent to use."""
+    return db.query(models.LLMModel).filter(models.LLMModel.is_active == True).first()
