@@ -197,6 +197,13 @@ class NoteResponse(NoteBase):
 # --- NEW PYDANTIC SCHEMAS FOR CALENDAR AND GMAIL ---
 
 # Calendar Schemas
+class CalendarEventUpdate(BaseModel):
+    # All fields are optional for updates
+    summary: Optional[str] = None
+    start_time_iso: Optional[str] = None
+    end_time_iso: Optional[str] = None
+    description: Optional[str] = None
+    location: Optional[str] = None
 class CalendarEventBase(BaseModel):
     summary: str
     # Use str for ISO formatted dates for input
