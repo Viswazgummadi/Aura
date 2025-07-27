@@ -79,6 +79,11 @@ class Task(Base):
     id = Column(String, primary_key=True, index=True)
     description = Column(String, nullable=False)
     status = Column(String, default="pending", nullable=False)
+
+    priority = Column(String, default="medium", nullable=False) # e.g., "low", "medium", "high"
+    due_date = Column(DateTime, nullable=True, index=True) # Optional due date, indexed for faster sorting
+
+
     created_at = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc))
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     owner = relationship("User", back_populates="tasks")
@@ -132,11 +137,21 @@ class TaskBase(BaseModel):
     description: str
 
 class TaskCreate(TaskBase):
-    pass
-
+    # Make priority and due_date optional during creation, with sensible defaults
+    priority: Optional[str] = "medium"
+    # The frontend should send due_date as an ISO 8601 string (e.g., "2025-12-31T23:59:59Z")
+    due_date: Optional[datetime.datetime] = None
+class TaskUpdate(BaseModel):
+    # For updates, all fields are optional
+    description: Optional[str] = None
+    status: Optional[str] = None
+    priority: Optional[str] = None
+    due_date: Optional[datetime.datetime] = None
 class TaskResponse(TaskBase):
     id: str
     status: str
+    priority: str
+    due_date: Optional[datetime.datetime]
     created_at: datetime.datetime
     user_id: int
 

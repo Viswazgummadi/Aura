@@ -102,32 +102,69 @@ def delete_oauth_state(db: Session, state_value: str) -> bool:
         return True
     return False
 
-# --- Task CRUD Functions (existing, no changes) ---
+# ADD THIS NEW BLOCK IN ITS PLACE
+# --- UPDATED Task CRUD Functions ---
+
 def get_task_by_id(db: Session, task_id: str, user_id: int) -> models.Task | None:
+    """Retrieves a single task by its unique ID, ensuring it belongs to the user."""
     return db.query(models.Task).filter(models.Task.id == task_id, models.Task.user_id == user_id).first()
 
-def get_tasks_by_status(db: Session, status: str, user_id: int, skip: int = 0, limit: int = 100) -> list[models.Task]:
-    return db.query(models.Task).filter(models.Task.status == status, models.Task.user_id == user_id).offset(skip).limit(limit).all()
-
 def get_all_tasks(db: Session, user_id: int, skip: int = 0, limit: int = 100) -> list[models.Task]:
-    return db.query(models.Task).filter(models.Task.user_id == user_id).offset(skip).limit(limit).all()
+    """
+    Retrieves all tasks for a specific user, intelligently sorted.
+    - Pending tasks are shown first.
+    - They are sorted by due date (tasks without a due date are last).
+    - Finally, they are sorted by priority.
+    """
+    return (
+        db.query(models.Task)
+        .filter(models.Task.user_id == user_id)
+        .order_by(
+            models.Task.status.desc(), # 'pending' comes before 'completed'
+            models.Task.due_date.asc().nullslast(),
+            models.Task.priority.desc() # Assumes priority is text, e.g., 'high', 'medium', 'low'
+        )
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
 
-def create_task(db: Session, description: str, user_id: int) -> models.Task:
+def create_task(db: Session, task: models.TaskCreate, user_id: int) -> models.Task:
+    """Creates a new task, now with optional priority and due_date."""
+    # We'll need a unique ID for the task, let's generate one.
+    # We need to import uuid at the top of the file for this.
     new_task_id = str(uuid.uuid4())[:8]
-    db_task = models.Task(id=new_task_id, description=description, user_id=user_id)
+    
+    # Unpack the Pydantic model into the SQLAlchemy model
+    db_task = models.Task(
+        id=new_task_id,
+        user_id=user_id,
+        **task.model_dump(exclude_unset=True) # Use exclude_unset to respect defaults
+    )
     db.add(db_task)
     db.commit()
     db.refresh(db_task)
     return db_task
 
-def update_task_status(db: Session, task_id: str, user_id: int, new_status: str) -> models.Task | None:
+def update_task(db: Session, task_id: str, task_update: models.TaskUpdate, user_id: int) -> models.Task | None:
+    """A flexible update function for any task attribute."""
     db_task = get_task_by_id(db, task_id, user_id)
     if db_task:
-        db_task.status = new_status
+        update_data = task_update.model_dump(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(db_task, key, value)
         db.commit()
         db.refresh(db_task)
     return db_task
 
+def delete_task_by_id(db: Session, task_id: str, user_id: int) -> bool:
+    """Deletes a task by its ID."""
+    db_task = get_task_by_id(db, task_id, user_id)
+    if db_task:
+        db.delete(db_task)
+        db.commit()
+        return True
+    return False
 def delete_task_by_id(db: Session, task_id: str, user_id: int) -> bool:
     """
     Deletes a task from the database by its ID, ensuring it belongs to the user.
