@@ -204,7 +204,7 @@ def fetch_new_messages_for_processing_from_api(
         print(f"An unexpected error occurred in fetch_new_messages_for_processing_from_api for user {user_id}: {e}")
         raise e
 
-def _fetch_messages_from_list_api(service, user_id: int, label_ids: list, max_results: int = 50) -> list:
+def _fetch_messages_from_list_api(service, user_id: int, label_ids: list, max_results: int = 6) -> list:
     results = service.users().messages().list(
         userId='me', 
         labelIds=label_ids, 
