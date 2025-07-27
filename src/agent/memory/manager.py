@@ -26,15 +26,27 @@ class MemoryManager:
     def _initialize_components(self):
         """
         A private method to initialize components on first use.
-        This prevents database calls during application startup.
+        This now explicitly uses Google's dedicated embedding model.
         """
-        # This function will only be called the first time a memory operation is needed.
         if self._embedding_model is None:
-            # The database tables WILL exist by the time this is called.
-            llm = model_manager.get_active_model()
-            if not llm:
-                raise Exception("Cannot initialize memory: No active LLM found.")
-            self._embedding_model = GoogleGenerativeAIEmbeddings(model=llm.model_name)
+            # We use a dedicated, high-performance model for creating embeddings.
+            # This is a best practice and avoids errors with generation-only models.
+            # It still benefits from our resilient key management system.
+            db = database.SessionLocal()
+            try:
+                # Get any valid, active Google API key using our existing CRUD function.
+                api_key_obj = crud.get_next_api_key(db, "google")
+                if not api_key_obj:
+                    raise Exception("Cannot initialize memory: No active Google API key found.")
+                
+                # Explicitly use the recommended model for embeddings.
+                self._embedding_model = GoogleGenerativeAIEmbeddings(
+                    model="models/embedding-001",
+                    google_api_key=api_key_obj.key
+                )
+                print(f"INFO: Initialized embedding model 'models/embedding-001' using API key ID {api_key_obj.id}")
+            finally:
+                db.close()
         
         if self._chroma_client is None:
             self._chroma_client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIRECTORY)
