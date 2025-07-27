@@ -4,7 +4,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, END
 from langchain.tools.render import render_text_description
-
+import json 
 from src.agent.graph.state import TriageState, TriageResult
 from src.core.model_manager import model_manager
 from src.agent.graph.builder import all_tools # Import the master tool list
@@ -56,8 +56,25 @@ def get_triage_agent_graph():
 
         # 3. Define Nodes
         def triage_email_node(state: TriageState):
+            """First node: Analyzes the email and produces a structured TriageResult."""
+            print("TRIAGE_AGENT: Triaging email...")
             chain = triage_prompt | structured_llm
             result = chain.invoke({"email_content": state["email_content"]})
+            
+            # --- THIS IS THE FINAL FIX ---
+            # We defensively parse the LLM's output to make the agent resilient.
+            if isinstance(result.extracted_entities, str):
+                try:
+                    # If the LLM gave us a string, try to load it as a dictionary.
+                    result.extracted_entities = json.loads(result.extracted_entities)
+                    print("INFO: Successfully parsed stringified extracted_entities.")
+                except json.JSONDecodeError:
+                    # If parsing fails, it's not a valid dict. Default to empty.
+                    print(f"WARN: Could not parse extracted_entities string: {result.extracted_entities}")
+                    result.extracted_entities = {}
+            # --- END OF FIX ---
+
+            print(f"TRIAGE_AGENT: Triage result: {result}")
             return {"triage_result": result}
 
         def planning_node(state: TriageState):
