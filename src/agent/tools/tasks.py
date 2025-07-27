@@ -14,11 +14,9 @@ def create_task(user_id: int, description: str, priority: Optional[str] = "mediu
     """
     db = database.SessionLocal()
     try:
-        # Pydantic will handle parsing the ISO string to a datetime object
         due_date_dt = datetime.datetime.fromisoformat(due_date.replace("Z", "+00:00")) if due_date else None
         task_create = models.TaskCreate(description=description, priority=priority, due_date=due_date_dt)
         db_task = crud.create_task(db=db, task=task_create, user_id=user_id)
-        # Use from_orm (or model_validate in Pydantic v2) to safely convert the SQLAlchemy object
         return models.TaskResponse.from_orm(db_task).model_dump()
     finally:
         db.close()
@@ -46,7 +44,6 @@ def update_task(user_id: int, task_id: str, description: Optional[str] = None, s
     try:
         due_date_dt = datetime.datetime.fromisoformat(due_date.replace("Z", "+00:00")) if due_date else None
         task_update = models.TaskUpdate(description=description, status=status, priority=priority, due_date=due_date_dt)
-        # Use exclude_unset=True so we only update provided fields
         updated_task = crud.update_task(db, task_id=task_id, task_update=task_update, user_id=user_id)
         if not updated_task:
             return {"error": "Task not found."}

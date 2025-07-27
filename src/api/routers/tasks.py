@@ -4,11 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
 
-# --- MODIFIED: We no longer need the crud layer here ---
-from src.database.database import get_db
 from src.database.models import TaskCreate, TaskResponse, TaskUpdate, User
 from src.api.dependencies import get_current_user
-# --- NEW: Import the tools which are now our source of truth ---
+# Import the tools which are now our source of truth
 from src.agent.tools import tasks as tasks_tools
 
 router = APIRouter(
@@ -16,18 +14,17 @@ router = APIRouter(
     tags=["Tasks"]
 )
 
-@router.post("", response_model=TaskResponse, status_code=status.HTTP_2_CREATED)
+@router.post("", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
 def create_new_task(
     task: TaskCreate,
     current_user: User = Depends(get_current_user)
 ):
     """API endpoint to create a new task."""
-    # This endpoint now calls the tool, passing the authenticated user's ID.
     return tasks_tools.create_task(
         user_id=current_user.id,
         description=task.description,
         priority=task.priority,
-        due_date=task.due_date.isoformat() if task.due_date else None
+        due_date=task.due_date.isoformat().replace('+00:00', 'Z') if task.due_date else None
     )
 
 @router.get("", response_model=List[TaskResponse])
@@ -44,15 +41,13 @@ def update_a_task(
     current_user: User = Depends(get_current_user)
 ):
     """API endpoint to update a task's attributes."""
-    # The tool function takes all possible arguments.
-    # The Pydantic model ensures we only pass what the user provided.
     updated_task_dict = tasks_tools.update_task(
         user_id=current_user.id,
         task_id=task_id,
         description=task_update.description,
         status=task_update.status,
         priority=task_update.priority,
-        due_date=task_update.due_date.isoformat() if task_update.due_date else None
+        due_date=task_update.due_date.isoformat().replace('+00:00', 'Z') if task_update.due_date else None
     )
     if "error" in updated_task_dict:
         raise HTTPException(status_code=404, detail=updated_task_dict["error"])
