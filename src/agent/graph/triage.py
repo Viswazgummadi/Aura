@@ -7,115 +7,81 @@ from langchain.tools.render import render_text_description
 
 from src.agent.graph.state import TriageState, TriageResult
 from src.core.model_manager import model_manager
+from src.agent.graph.builder import all_tools # Import the master tool list
 
-# --- THIS IS THE CORRECT IMPORT ---
-# We import the master tool list from the conversational agent's builder,
-# making it the single source of truth for all available tools.
-from src.agent.graph.builder import all_tools
+# --- Global variable to hold our compiled graph ---
+_triage_agent_graph = None
 
-# 1. Initialize the LLM and bind it to our TriageResult schema
-active_model = model_manager.get_active_model()
-llm = ChatGoogleGenerativeAI(model=active_model.model_name)
-structured_llm = llm.with_structured_output(TriageResult)
-
-# 2. Define the Prompts
-triage_prompt = ChatPromptTemplate.from_template(
-"""
-You are an expert email triaging assistant. Analyze the following email content and classify it according to the provided JSON schema.
-Your goal is to determine if an action is required and extract all necessary information for that action.
-
-Email Content:
----
-{email_content}
----
-"""
-)
-
-planning_prompt_template = ChatPromptTemplate.from_template(
-"""
-You are an expert planning agent. Based on the triage of an email, formulate a plan to take action.
-Your goal is to choose the single best tool to call to address the user's needs.
-
-Available Tools:
-{tools}
-
-Triage Result:
----
-{triage_result}
----
-
-Based on the triage result, which tool should be called? Respond with a single, valid JSON tool call.
-If no action is needed, respond with an empty JSON object {{}}.
-"""
-)
-
-# 3. Create the Agent Chain for Planning
-planning_agent = planning_prompt_template | llm.bind_tools(all_tools)
-
-# 4. Define the Nodes of the Graph
-def triage_email_node(state: TriageState):
-    """First node: Analyzes the email and produces a structured TriageResult."""
-    print("TRIAGE_AGENT: Triaging email...")
-    chain = triage_prompt | structured_llm
-    result = chain.invoke({"email_content": state["email_content"]})
-    print(f"TRIAGE_AGENT: Triage result: {result}")
-    return {"triage_result": result}
-
-def planning_node(state: TriageState):
-    """Second node: Decides which tool to call based on the triage result."""
-    if not state["triage_result"].action_required:
-        print("TRIAGE_AGENT: No action required.")
-        return {"plan": []}
-    
-    print("TRIAGE_AGENT: Planning tool call...")
-    tool_description = render_text_description(all_tools)
-    plan = planning_agent.invoke({
-        "triage_result": state["triage_result"].dict(),
-        "tools": tool_description
-    })
-    print(f"TRIAGE_AGENT: Plan generated: {plan.tool_calls}")
-    return {"plan": plan.tool_calls}
-
-def tool_executor_node(state: TriageState):
-    """Third node: Executes the planned tool call."""
-    tool_calls = state.get("plan", [])
-    if not tool_calls:
-        return {"tool_outputs": []}
+def get_triage_agent_graph():
+    """
+    This function builds and returns the triage agent graph.
+    It uses a global variable to ensure the graph is only built once (lazy loading).
+    """
+    global _triage_agent_graph
+    if _triage_agent_graph is None:
+        print("INFO: Building Triage Agent graph for the first time...")
         
-    print(f"TRIAGE_AGENT: Executing tool call: {tool_calls[0]}")
-    tool_map = {tool.name: tool for tool in all_tools}
-    tool_call = tool_calls[0]
-    tool_to_call = tool_map.get(tool_call['name'])
-    
-    tool_args = tool_call['args']
-    tool_args['user_id'] = state['user_id']
-    
-    if tool_to_call:
-        result = tool_to_call.invoke(tool_args)
-        return {"tool_outputs": [result]}
-    return {"tool_outputs": [{"error": "Tool not found."}]}
+        # 1. Initialize the LLM (This now happens safely inside the function)
+        active_model = model_manager.get_active_model()
+        llm = ChatGoogleGenerativeAI(model=active_model.model_name)
+        structured_llm = llm.with_structured_output(TriageResult)
 
-# 5. Define the Edges (Conditional Logic)
-def should_execute_tool(state: TriageState):
-    """Router: Decides if we should execute a tool or end the process."""
-    if state.get("plan") and state["plan"]:
-        return "execute_tool"
-    return END
+        # 2. Define Prompts
+        triage_prompt = ChatPromptTemplate.from_template(
+            "You are an expert email triaging assistant. Analyze the following email content and classify it according to the provided JSON schema.\n"
+            "Email Content:\n---\n{email_content}\n---"
+        )
+        planning_prompt_template = ChatPromptTemplate.from_template(
+            "You are an expert planning agent. Based on the triage of an email, choose the single best tool to call.\n"
+            "Available Tools:\n{tools}\n\nTriage Result:\n---\n{triage_result}\n---\n"
+            "Respond with a single, valid JSON tool call. If no action is needed, respond with an empty JSON object {{}}."
+        )
+        planning_agent = planning_prompt_template | llm.bind_tools(all_tools)
 
-# 6. Build the Graph
-graph_builder = StateGraph(TriageState)
-graph_builder.add_node("triage_email", triage_email_node)
-graph_builder.add_node("plan_action", planning_node)
-graph_builder.add_node("execute_tool", tool_executor_node)
+        # 3. Define Nodes
+        def triage_email_node(state: TriageState):
+            chain = triage_prompt | structured_llm
+            result = chain.invoke({"email_content": state["email_content"]})
+            return {"triage_result": result}
 
-graph_builder.set_entry_point("triage_email")
-graph_builder.add_edge("triage_email", "plan_action")
-graph_builder.add_conditional_edges(
-    "plan_action",
-    should_execute_tool,
-    { "execute_tool": "execute_tool", END: END }
-)
-graph_builder.add_edge("execute_tool", END)
+        def planning_node(state: TriageState):
+            if not state["triage_result"].action_required:
+                return {"plan": []}
+            tool_description = render_text_description(all_tools)
+            plan = planning_agent.invoke({
+                "triage_result": state["triage_result"].dict(), "tools": tool_description
+            })
+            return {"plan": plan.tool_calls}
 
-# Compile the final graph
-triage_agent_graph = graph_builder.compile()
+        def tool_executor_node(state: TriageState):
+            tool_calls = state.get("plan", [])
+            if not tool_calls: return {"tool_outputs": []}
+            tool_map = {tool.name: tool for tool in all_tools}
+            tool_call = tool_calls[0]
+            tool_to_call = tool_map.get(tool_call['name'])
+            tool_args = tool_call['args']
+            tool_args['user_id'] = state['user_id']
+            if tool_to_call:
+                result = tool_to_call.invoke(tool_args)
+                return {"tool_outputs": [result]}
+            return {"tool_outputs": [{"error": "Tool not found."}]}
+
+        # 4. Define Edges
+        def should_execute_tool(state: TriageState):
+            return "execute_tool" if state.get("plan") and state["plan"] else END
+
+        # 5. Build Graph
+        graph_builder = StateGraph(TriageState)
+        graph_builder.add_node("triage_email", triage_email_node)
+        graph_builder.add_node("plan_action", planning_node)
+        graph_builder.add_node("execute_tool", tool_executor_node)
+        graph_builder.set_entry_point("triage_email")
+        graph_builder.add_edge("triage_email", "plan_action")
+        graph_builder.add_conditional_edges(
+            "plan_action", should_execute_tool, {"execute_tool": "execute_tool", END: END}
+        )
+        graph_builder.add_edge("execute_tool", END)
+        _triage_agent_graph = graph_builder.compile()
+        print("INFO: Triage Agent graph built successfully.")
+
+    return _triage_agent_graph

@@ -5,7 +5,7 @@ import asyncio
 
 # --- NEW IMPORTS ---
 from src.agent.tools import gmail as gmail_tools
-from src.agent.graph.triage import triage_agent_graph
+from src.agent.graph.triage import get_triage_agent_graph
 from src.database import crud, database
 from src.api.connection_manager import manager
 
@@ -50,6 +50,7 @@ def process_new_email_notification(email: str, start_history_id: int):
             full_email_content = f"From: {message['sender']}\nSubject: {message['subject']}\n\n{email_body}"
 
             # 4. Invoke the Triage Agent Graph
+            triage_agent_graph = get_triage_agent_graph()
             initial_state = {
                 "user_id": user.id,
                 "email_content": full_email_content,
