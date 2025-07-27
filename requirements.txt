@@ -25,3 +25,7 @@ passlib[bcrypt]
 python-jose[cryptography]
 python-multipart
 google-generativeai
+langchain              
+langchain-community   
+chromadb           
+langchain-google-genai 

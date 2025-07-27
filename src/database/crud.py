@@ -358,3 +358,24 @@ def set_active_llm_model(db: Session, model_name: str) -> models.LLMModel | None
 def get_active_llm_model(db: Session) -> models.LLMModel | None:
     """Retrieves the currently active LLM for the agent to use."""
     return db.query(models.LLMModel).filter(models.LLMModel.is_active == True).first()
+
+def add_chat_message(db: Session, session_id: str, message_json: str, user_id: int) -> models.ChatMessage:
+    """Adds a new chat message to the database."""
+    db_message = models.ChatMessage(
+        session_id=session_id,
+        message=message_json,
+        user_id=user_id
+    )
+    db.add(db_message)
+    db.commit()
+    db.refresh(db_message)
+    return db_message
+
+def get_chat_history(db: Session, session_id: str, user_id: int) -> list[models.ChatMessage]:
+    """Retrieves all messages for a given session, ordered by time."""
+    return (
+        db.query(models.ChatMessage)
+        .filter(models.ChatMessage.session_id == session_id, models.ChatMessage.user_id == user_id)
+        .order_by(models.ChatMessage.timestamp.asc())
+        .all()
+    )

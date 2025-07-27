@@ -58,6 +58,13 @@ class APIKey(Base):
     provider_id = Column(Integer, ForeignKey("llm_providers.id"))
     provider = relationship("LLMProvider", back_populates="api_keys")
 
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    id = Column(Integer, primary_key=True)
+    session_id = Column(String, index=True, nullable=False) # Groups messages into a conversation
+    message = Column(Text, nullable=False) # The actual content of the message
+    timestamp = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc))
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 # --- SQLAlchemy ORM Table Model Definitions (existing, no changes) ---
 class User(Base):
     __tablename__ = "users"
@@ -222,6 +229,15 @@ class LLMProviderResponse(LLMProviderBase):
     id: int
     models: List[LLMModelResponse] = []
     
+    class Config:
+        from_attributes = True
+        
+class ChatMessageResponse(BaseModel):
+    id: int
+    session_id: str
+    message: str # This will be the JSON representation from LangChain
+    timestamp: datetime.datetime
+
     class Config:
         from_attributes = True
 # --- NEW: Pydantic Schemas for Tag ---
