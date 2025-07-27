@@ -145,31 +145,34 @@ def delete_task_by_id(db: Session, task_id: str, user_id: int) -> bool:
         
     return False
 # --- Note CRUD Functions (existing, no changes) ---
-def get_note_by_key(db: Session, key: str, user_id: int) -> models.Note | None:
-    return db.query(models.Note).filter(models.Note.key == key.lower().strip(), models.Note.user_id == user_id).first()
+def get_note_by_id(db: Session, note_id: int, user_id: int) -> models.Note | None:
+    return db.query(models.Note).filter(models.Note.id == note_id, models.Note.user_id == user_id).first()
 
 def get_all_notes(db: Session, user_id: int, skip: int = 0, limit: int = 100) -> list[models.Note]:
-    return db.query(models.Note).filter(models.Note.user_id == user_id).offset(skip).limit(limit).all()
+    return db.query(models.Note).filter(models.Note.user_id == user_id).order_by(models.Note.updated_at.desc()).offset(skip).limit(limit).all()
 
-def create_or_update_note(db: Session, key: str, value: str, user_id: int) -> models.Note:
-    normalized_key = key.lower().strip()
-    db_note = get_note_by_key(db, normalized_key, user_id)
-    
-    if db_note:
-        db_note.value = value
-        db_note.updated_at = datetime.datetime.now(datetime.timezone.utc)
-    else:
-        db_note = models.Note(key=normalized_key, value=value, user_id=user_id)
-        db.add(db_note)
-        
+def create_note(db: Session, note: models.NoteCreate, user_id: int) -> models.Note:
+    db_note = models.Note(**note.model_dump(), user_id=user_id)
+    db.add(db_note)
     db.commit()
     db.refresh(db_note)
     return db_note
 
-def delete_note_by_key(db: Session, key: str, user_id: int) -> bool:
-    normalized_key = key.lower().strip()
-    db_note = get_note_by_key(db, normalized_key, user_id)
-    
+def update_note(db: Session, note_id: int, note_update: models.NoteUpdate, user_id: int) -> models.Note | None:
+    db_note = get_note_by_id(db, note_id=note_id, user_id=user_id)
+    if db_note:
+        # Get the update data, excluding any None values so we only update what's provided
+        update_data = note_update.model_dump(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(db_note, key, value)
+        
+        db_note.updated_at = datetime.datetime.now(datetime.timezone.utc)
+        db.commit()
+        db.refresh(db_note)
+    return db_note
+
+def delete_note_by_id(db: Session, note_id: int, user_id: int) -> bool:
+    db_note = get_note_by_id(db, note_id=note_id, user_id=user_id)
     if db_note:
         db.delete(db_note)
         db.commit()

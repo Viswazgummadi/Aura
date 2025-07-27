@@ -70,15 +70,21 @@ class Task(Base):
 
 class Note(Base):
     __tablename__ = "notes"
-    key = Column(String, primary_key=True, index=True)
-    value = Column(Text, nullable=False)
+    
+    # The new structure with a proper ID, title, and content
+    id = Column(Integer, primary_key=True, autoincrement=True) 
+    title = Column(String, index=True, nullable=False)
+    content = Column(Text, nullable=True) # Content can be optional
+    
     created_at = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc))
     updated_at = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc), onupdate=datetime.datetime.now(datetime.timezone.utc))
+    
+    # The note still belongs to a user
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     owner = relationship("User", back_populates="notes")
     
     def __repr__(self):
-        return f"<Note(key='{self.key}', value='{self.value[:20]}...', user_id={self.user_id})>"
+        return f"<Note(id={self.id}, title='{self.title[:20]}...', user_id={self.user_id})>"
 
 # --- Pydantic Schemas (existing) ---
 class UserBase(BaseModel):
@@ -115,15 +121,21 @@ class TaskResponse(TaskBase):
 
     class Config:
         from_attributes = True
-
+# ADD THESE NEW CLASSES IN THEIR PLACE
 class NoteBase(BaseModel):
-    key: str
-    value: str
+    title: str
+    content: Optional[str] = None
 
 class NoteCreate(NoteBase):
     pass
 
+class NoteUpdate(BaseModel):
+    # For updates, all fields can be optional
+    title: Optional[str] = None
+    content: Optional[str] = None
+
 class NoteResponse(NoteBase):
+    id: int
     created_at: datetime.datetime
     updated_at: datetime.datetime
     user_id: int
