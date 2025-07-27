@@ -146,12 +146,16 @@ def delete_task_by_id(db: Session, task_id: str, user_id: int) -> bool:
     return False
 # --- Note CRUD Functions (existing, no changes) ---
 def get_note_by_id(db: Session, note_id: int, user_id: int) -> models.Note | None:
+    """Retrieves a single note by its unique ID, ensuring it belongs to the user."""
     return db.query(models.Note).filter(models.Note.id == note_id, models.Note.user_id == user_id).first()
 
 def get_all_notes(db: Session, user_id: int, skip: int = 0, limit: int = 100) -> list[models.Note]:
+    """Retrieves all notes for a specific user, ordered by the most recently updated."""
     return db.query(models.Note).filter(models.Note.user_id == user_id).order_by(models.Note.updated_at.desc()).offset(skip).limit(limit).all()
 
 def create_note(db: Session, note: models.NoteCreate, user_id: int) -> models.Note:
+    """Creates a new note in the database."""
+    # We use **note.model_dump() to unpack the Pydantic model into keyword arguments
     db_note = models.Note(**note.model_dump(), user_id=user_id)
     db.add(db_note)
     db.commit()
@@ -159,6 +163,7 @@ def create_note(db: Session, note: models.NoteCreate, user_id: int) -> models.No
     return db_note
 
 def update_note(db: Session, note_id: int, note_update: models.NoteUpdate, user_id: int) -> models.Note | None:
+    """Updates a note's title or content. Only updates fields that are provided."""
     db_note = get_note_by_id(db, note_id=note_id, user_id=user_id)
     if db_note:
         # Get the update data, excluding any None values so we only update what's provided
@@ -166,12 +171,14 @@ def update_note(db: Session, note_id: int, note_update: models.NoteUpdate, user_
         for key, value in update_data.items():
             setattr(db_note, key, value)
         
+        # Manually set the updated_at timestamp
         db_note.updated_at = datetime.datetime.now(datetime.timezone.utc)
         db.commit()
         db.refresh(db_note)
     return db_note
 
 def delete_note_by_id(db: Session, note_id: int, user_id: int) -> bool:
+    """Deletes a note from the database by its ID."""
     db_note = get_note_by_id(db, note_id=note_id, user_id=user_id)
     if db_note:
         db.delete(db_note)

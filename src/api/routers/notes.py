@@ -21,7 +21,7 @@ def create_new_note(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Create a new note for the authenticated user with a title and content.
+    Create a new note for the authenticated user with a title and optional content.
     """
     return crud.create_note(db=db, note=note, user_id=current_user.id)
 
@@ -31,7 +31,8 @@ def list_all_user_notes(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Retrieve a list of all saved notes for the authenticated user.
+    Retrieve a list of all saved notes for the authenticated user,
+    ordered by the most recently updated.
     """
     return crud.get_all_notes(db, user_id=current_user.id)
 
@@ -57,9 +58,10 @@ def update_existing_note(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Update a note's title or content.
+    Update a note's title or content. Only the fields you provide
+    in the request body will be updated.
     """
-    updated_note = crud.update_note(db, note_id=note_id, note_update=note_update, user_id=current_user.id)
+    updated_note = crud.update_note(db=db, note_id=note_id, note_update=note_update, user_id=current_user.id)
     if not updated_note:
         raise HTTPException(status_code=404, detail="Note not found")
     return updated_note
@@ -76,4 +78,5 @@ def delete_a_note(
     deleted = crud.delete_note_by_id(db=db, note_id=note_id, user_id=current_user.id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Note not found")
+    # On successful deletion, we return a 204 status code with no content.
     return
