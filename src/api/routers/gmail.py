@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
-
+from src.database.models import GmailMessageResponse, User, GmailSendRequest
 from src.database.database import get_db
-from src.database.models import GmailMessageResponse, User # <-- Import new schema and User model
 from src.api.dependencies import get_current_user # Our authentication dependency
 from src.agent.tools import gmail as gmail_tool # Our refactored gmail tool
 from src.agent.tools import gmail_watcher # For watch/unwatch (admin)
+from googleapiclient.errors import HttpError
 
 router = APIRouter(
     prefix="/gmail",
@@ -134,4 +134,49 @@ def unwatch_gmail_inbox(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to stop Gmail watch: {e}"
+        )
+@router.post("/send", status_code=status.HTTP_201_CREATED)
+def send_new_email(
+    email_data: GmailSendRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Compose and send a new email from the authenticated user's account.
+    """
+    print(f"API: Received request to send email for user ID: {current_user.id}")
+    try:
+        sent_message = gmail_tool.send_email(
+            user_id=current_user.id,
+            to=email_data.to,
+            subject=email_data.subject,
+            body=email_data.body
+        )
+        if not sent_message:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to send email for an unknown reason."
+            )
+        
+        # Return a confirmation response
+        return {
+            "status": "success",
+            "message": "Email sent successfully.",
+            "message_id": sent_message.get("id"),
+            "thread_id": sent_message.get("threadId")
+        }
+    except HttpError as e:
+        # Provide a more specific error if permissions are denied
+        if e.resp.status == 403:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Failed to send email: Permission denied. The 'gmail.send' scope may be missing or revoked."
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to send email due to a Google API error: {e}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred while sending email: {e}"
         )

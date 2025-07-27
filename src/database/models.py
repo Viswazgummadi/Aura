@@ -233,3 +233,7 @@ class GmailMessageResponse(BaseModel):
 
     class Config:
         extra = 'allow' # Allow extra fields from Google API response
+class GmailSendRequest(BaseModel):
+    to: str
+    subject: str
+    body: str

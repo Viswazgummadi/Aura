@@ -4,6 +4,7 @@ from email import policy
 import time
 from datetime import datetime, timedelta, timezone
 from googleapiclient.errors import HttpError
+from email.mime.text import MIMEText
 
 from src.core.gcp_auth import build_google_service
 from src.core.utils import to_rfc3339 # <-- NEW IMPORT
@@ -233,3 +234,36 @@ def _fetch_unread_and_get_history_id_fallback(service, user_id: int) -> tuple[li
 
     messages_to_process.sort(key=lambda x: (x['historyId'], x['id']))
     return messages_to_process, highest_history_id_in_fetch
+
+def send_email(user_id: int, to: str, subject: str, body: str) -> dict | None:
+    """
+    Creates and sends a new email message.
+    """
+    print(f"TOOL: send_email called for user {user_id} to '{to}'")
+    try:
+        service = build_google_service('gmail', 'v1', user_id=user_id)
+        
+        # Create the email message object using Python's email library
+        message = MIMEText(body)
+        message['to'] = to
+        message['subject'] = subject
+        
+        # The API requires the message to be base64url encoded
+        encoded_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+        
+        create_message_body = {'raw': encoded_message}
+        
+        sent_message = service.users().messages().send(
+            userId="me",
+            body=create_message_body
+        ).execute()
+        
+        print(f"SUCCESS: Email sent from user {user_id}. Message ID: {sent_message['id']}")
+        return sent_message
+        
+    except HttpError as error:
+        print(f"An HttpError occurred during email sending for user {user_id}: {error}")
+        raise error
+    except Exception as e:
+        print(f"An unexpected error occurred during email sending for user {user_id}: {e}")
+        raise e
