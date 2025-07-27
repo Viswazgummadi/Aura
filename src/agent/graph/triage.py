@@ -3,12 +3,15 @@
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, END
+from langchain.tools.render import render_text_description
 
 from src.agent.graph.state import TriageState, TriageResult
 from src.core.model_manager import model_manager
-# We need to import the tools to execute them
-from src.agent.graph.builder  import all_tools
-from langchain.tools.render import render_text_description
+
+# --- THIS IS THE CORRECT IMPORT ---
+# We import the master tool list from the conversational agent's builder,
+# making it the single source of truth for all available tools.
+from src.agent.graph.builder import all_tools
 
 # 1. Initialize the LLM and bind it to our TriageResult schema
 active_model = model_manager.get_active_model()
@@ -50,7 +53,6 @@ If no action is needed, respond with an empty JSON object {{}}.
 planning_agent = planning_prompt_template | llm.bind_tools(all_tools)
 
 # 4. Define the Nodes of the Graph
-
 def triage_email_node(state: TriageState):
     """First node: Analyzes the email and produces a structured TriageResult."""
     print("TRIAGE_AGENT: Triaging email...")
@@ -81,12 +83,10 @@ def tool_executor_node(state: TriageState):
         return {"tool_outputs": []}
         
     print(f"TRIAGE_AGENT: Executing tool call: {tool_calls[0]}")
-    # This is a simplified executor for a single tool call
     tool_map = {tool.name: tool for tool in all_tools}
     tool_call = tool_calls[0]
     tool_to_call = tool_map.get(tool_call['name'])
     
-    # Inject the user_id into the tool call arguments
     tool_args = tool_call['args']
     tool_args['user_id'] = state['user_id']
     
@@ -98,13 +98,12 @@ def tool_executor_node(state: TriageState):
 # 5. Define the Edges (Conditional Logic)
 def should_execute_tool(state: TriageState):
     """Router: Decides if we should execute a tool or end the process."""
-    if state.get("plan"):
+    if state.get("plan") and state["plan"]:
         return "execute_tool"
     return END
 
 # 6. Build the Graph
 graph_builder = StateGraph(TriageState)
-
 graph_builder.add_node("triage_email", triage_email_node)
 graph_builder.add_node("plan_action", planning_node)
 graph_builder.add_node("execute_tool", tool_executor_node)
