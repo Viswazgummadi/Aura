@@ -19,13 +19,25 @@ from src.agent.tools.notes import (
 from src.agent.tools.tasks import (
     create_task, get_all_tasks, update_task, delete_task
 )
+from src.agent.tools.calendar import (
+    list_upcoming_events, create_calendar_event, update_calendar_event, delete_calendar_event
+)
+from src.agent.tools.gmail import (
+    list_unread_emails, get_email_body, send_email, mark_email_as_read
+)
 
+# This is the complete list of capabilities for the Aura agent.
 all_tools = [
+    # Note Tools
     create_note, get_all_notes, search_notes, update_note,
     delete_note, add_tag_to_note, remove_tag_from_note, get_notes_by_tag,
+    # Task Tools
     create_task, get_all_tasks, update_task, delete_task,
+    # Calendar Tools
+    list_upcoming_events, create_calendar_event, update_calendar_event, delete_calendar_event,
+    # Gmail Tools
+    list_unread_emails, get_email_body, send_email, mark_email_as_read,
 ]
-
 # --- Global variable to hold our compiled graph ---
 _agent_graph = None
 

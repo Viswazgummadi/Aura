@@ -1,48 +1,38 @@
-import datetime
+# src/agent/tools/calendar.py
+
+from langchain_core.tools import tool
+from typing import List, Dict, Optional
 from googleapiclient.errors import HttpError
-
 from src.core.gcp_auth import build_google_service
-from src.core.utils import to_rfc3339 # <-- NEW IMPORT
+import datetime
 
-# --- Public Tool Functions for Calendar ---
-
-def fetch_upcoming_events(user_id: int, max_results: int = 5) -> list:
-    print(f"TOOL: fetch_upcoming_events called for user ID: {user_id}")
-    now_utc = datetime.datetime.now(datetime.timezone.utc)
+@tool
+def list_upcoming_events(user_id: int, max_results: int = 10) -> List[Dict]:
+    """
+    Lists the user's upcoming Google Calendar events.
+    Use this to check the user's schedule.
+    """
     try:
         service = build_google_service('calendar', 'v3', user_id)
-        time_min = to_rfc3339(now_utc)
         events_result = service.events().list(
             calendarId="primary",
-            timeMin=time_min,
+            timeMin=(datetime.datetime.now(datetime.timezone.utc)).isoformat(),
             maxResults=max_results,
             singleEvents=True,
             orderBy="startTime"
         ).execute()
         return events_result.get("items", [])
-    except HttpError as error:
-        print(f"An HttpError occurred in fetch_upcoming_events for user {user_id}: {error}")
-        raise
     except Exception as e:
-        print(f"An unexpected error occurred in fetch_upcoming_events for user {user_id}: {e}")
-        raise
+        return [{"error": f"An unexpected error occurred: {e}"}]
 
-def create_new_event(
-    user_id: int,
-    summary: str, 
-    start_time_iso: str, # This should already be RFC 3339 from frontend/Pydantic
-    end_time_iso: str,   # This should already be RFC 3339 from frontend/Pydantic
-    description: str = None, 
-    location: str = None
-) -> dict | None:
-    print(f"TOOL: create_new_event called for user ID: {user_id}, summary: '{summary}'")
+@tool
+def create_calendar_event(user_id: int, summary: str, start_time_iso: str, end_time_iso: str, description: Optional[str] = None, location: Optional[str] = None) -> Dict:
+    """
+    Creates a new event on the user's Google Calendar.
+    `start_time_iso` and `end_time_iso` must be in 'YYYY-MM-DDTHH:MM:SSZ' format.
+    """
     try:
         service = build_google_service('calendar', 'v3', user_id=user_id)
-
-        # Ensure that start_time_iso and end_time_iso are indeed RFC 3339 compliant strings
-        # If your frontend sends "YYYY-MM-DDTHH:MM:SS" (naive), you might need to
-        # parse them to datetime objects, make them aware, and then to_rfc3339.
-        # For this example, we assume the input ISO strings are already correct.
         event_body = {
             'summary': summary,
             'location': location,
@@ -50,88 +40,47 @@ def create_new_event(
             'start': {'dateTime': start_time_iso, 'timeZone': 'UTC'},
             'end': {'dateTime': end_time_iso, 'timeZone': 'UTC'},
         }
-
-        new_event = service.events().insert(
-            calendarId='primary', 
-            body=event_body
-        ).execute()
-        
-        print(f"Event created for user {user_id}: {new_event.get('htmlLink')}")
+        new_event = service.events().insert(calendarId='primary', body=event_body).execute()
         return new_event
-    except HttpError as error:
-        print(f'An HttpError occurred during event creation for user {user_id}: {error}')
-        raise error
     except Exception as e:
-        print(f"An unexpected error occurred during event creation for user {user_id}: {e}")
-        raise e
-def update_calendar_event(
-    user_id: int,
-    event_id: str,
-    summary: str = None,
-    start_time_iso: str = None,
-    end_time_iso: str = None,
-    description: str = None,
-    location: str = None
-) -> dict | None:
+        return {"error": f"An unexpected error occurred: {e}"}
+
+@tool
+def update_calendar_event(user_id: int, event_id: str, summary: str = None, start_time_iso: str = None, end_time_iso: str = None, description: str = None, location: str = None) -> Dict:
     """
-    Updates an existing calendar event. Only the provided fields will be changed.
+    Updates an existing Google Calendar event. You must provide the event_id.
+    Only include the fields you want to change.
     """
-    print(f"TOOL: update_calendar_event called for user {user_id}, event {event_id}")
     try:
         service = build_google_service('calendar', 'v3', user_id=user_id)
-        
-        # First, get the existing event to ensure it exists and to preserve its other data
         event = service.events().get(calendarId='primary', eventId=event_id).execute()
-
-        # Update fields only if they are provided in the call
-        if summary:
-            event['summary'] = summary
-        if location:
-            event['location'] = location
-        if description:
-            event['description'] = description
-        if start_time_iso:
-            event['start'] = {'dateTime': start_time_iso, 'timeZone': 'UTC'}
-        if end_time_iso:
-            event['end'] = {'dateTime': end_time_iso, 'timeZone': 'UTC'}
-
-        updated_event = service.events().update(
-            calendarId='primary',
-            eventId=event['id'],
-            body=event
-        ).execute()
-        
-        print(f"Event updated for user {user_id}: {updated_event.get('htmlLink')}")
+        if summary: event['summary'] = summary
+        if location: event['location'] = location
+        if description: event['description'] = description
+        if start_time_iso: event['start'] = {'dateTime': start_time_iso, 'timeZone': 'UTC'}
+        if end_time_iso: event['end'] = {'dateTime': end_time_iso, 'timeZone': 'UTC'}
+        updated_event = service.events().update(calendarId='primary', eventId=event['id'], body=event).execute()
         return updated_event
-    except HttpError as error:
-        print(f'An HttpError occurred during event update for user {user_id}: {error}')
-        raise error
+    except HttpError as e:
+        if e.resp.status == 404:
+            return {"error": f"Event with ID '{event_id}' not found."}
+        return {"error": f"An API error occurred: {e}"}
     except Exception as e:
-        print(f"An unexpected error occurred during event update for user {user_id}: {e}")
-        raise e
+        return {"error": f"An unexpected error occurred: {e}"}
 
-def delete_calendar_event(user_id: int, event_id: str) -> bool:
+@tool
+def delete_calendar_event(user_id: int, event_id: str) -> str:
     """
-    Deletes a calendar event.
+    Deletes an event from the user's Google Calendar by its ID.
     """
-    print(f"TOOL: delete_calendar_event called for user {user_id}, event {event_id}")
     try:
         service = build_google_service('calendar', 'v3', user_id=user_id)
-        
-        service.events().delete(
-            calendarId='primary',
-            eventId=event_id
-        ).execute()
-        
-        print(f"Event {event_id} deleted successfully for user {user_id}.")
-        return True
-    except HttpError as error:
-        # If the event is already deleted, Google sends a 410 Gone status. This is success.
-        if error.resp.status == 410:
-            print(f"Event {event_id} was already gone. Considering it deleted.")
-            return True
-        print(f'An HttpError occurred during event deletion for user {user_id}: {error}')
-        raise error
+        service.events().delete(calendarId='primary', eventId=event_id).execute()
+        return f"Success: Event with ID '{event_id}' has been deleted."
+    except HttpError as e:
+        if e.resp.status in [404, 410]: # Not Found or Gone
+            return f"Error: Event with ID '{event_id}' not found or already deleted."
+        return f"Error: An API error occurred: {e}"
     except Exception as e:
-        print(f"An unexpected error occurred during event deletion for user {user_id}: {e}")
-        raise e
+        return f"Error: An unexpected error occurred: {e}"
+
