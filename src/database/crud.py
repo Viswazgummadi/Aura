@@ -185,3 +185,53 @@ def delete_note_by_id(db: Session, note_id: int, user_id: int) -> bool:
         db.commit()
         return True
     return False
+# --- Tag CRUD Functions ---
+
+def get_or_create_tag(db: Session, tag_name: str) -> models.Tag:
+    """
+    Efficiently retrieves a tag by its name if it exists,
+    or creates it if it does not. Prevents duplicate tags.
+    """
+    # Normalize tag name to lowercase to prevent duplicates like "Work" and "work"
+    normalized_name = tag_name.lower().strip()
+    db_tag = db.query(models.Tag).filter(models.Tag.name == normalized_name).first()
+    if not db_tag:
+        db_tag = models.Tag(name=normalized_name)
+        db.add(db_tag)
+        db.commit()
+        db.refresh(db_tag)
+    return db_tag
+
+def add_tag_to_note(db: Session, note_id: int, tag_name: str, user_id: int) -> models.Note | None:
+    """Adds a tag to a specific note, creating the tag if necessary."""
+    db_note = get_note_by_id(db, note_id=note_id, user_id=user_id)
+    if db_note:
+        db_tag = get_or_create_tag(db, tag_name=tag_name)
+        # Check if the tag is not already associated with the note
+        if db_tag not in db_note.tags:
+            db_note.tags.append(db_tag)
+            db.commit()
+            db.refresh(db_note)
+    return db_note
+
+def remove_tag_from_note(db: Session, note_id: int, tag_id: int, user_id: int) -> models.Note | None:
+    """Removes a tag from a specific note."""
+    db_note = get_note_by_id(db, note_id=note_id, user_id=user_id)
+    db_tag = db.query(models.Tag).filter(models.Tag.id == tag_id).first()
+    
+    if db_note and db_tag and db_tag in db_note.tags:
+        db_note.tags.remove(db_tag)
+        db.commit()
+        db.refresh(db_note)
+        return db_note
+    return None
+
+def get_notes_by_tag_name(db: Session, tag_name: str, user_id: int) -> list[models.Note]:
+    """Retrieves all notes for a user that are associated with a specific tag."""
+    normalized_name = tag_name.lower().strip()
+    return (
+        db.query(models.Note)
+        .join(models.Note.tags)
+        .filter(models.Tag.name == normalized_name, models.Note.user_id == user_id)
+        .all()
+    )

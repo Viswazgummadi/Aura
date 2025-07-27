@@ -11,9 +11,27 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, relationship
 from pydantic import BaseModel
 from typing import List, Optional
-
+from sqlalchemy import Table
 Base = declarative_base()
+note_tag_association_table = Table(
+    "note_tag_association",
+    Base.metadata,
+    Column("note_id", Integer, ForeignKey("notes.id"), primary_key=True),
+    Column("tag_id", Integer, ForeignKey("tags.id"), primary_key=True),
+)
+class Tag(Base):
+    __tablename__ = "tags"
 
+    id = Column(Integer, primary_key=True)
+    name = Column(String, unique=True, index=True, nullable=False)
+
+    # This relationship is defined by the association table
+    notes = relationship(
+        "Note", secondary=note_tag_association_table, back_populates="tags"
+    )
+
+    def __repr__(self):
+        return f"<Tag(id={self.id}, name='{self.name}')>"
 # --- SQLAlchemy ORM Table Model Definitions (existing, no changes) ---
 class User(Base):
     __tablename__ = "users"
@@ -81,8 +99,11 @@ class Note(Base):
     
     # The note still belongs to a user
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    tags = relationship(
+        "Tag", secondary=note_tag_association_table, back_populates="notes"
+    )
+
     owner = relationship("User", back_populates="notes")
-    
     def __repr__(self):
         return f"<Note(id={self.id}, title='{self.title[:20]}...', user_id={self.user_id})>"
 
@@ -121,6 +142,20 @@ class TaskResponse(TaskBase):
 
     class Config:
         from_attributes = True
+        
+# --- NEW: Pydantic Schemas for Tag ---
+class TagBase(BaseModel):
+    name: str
+
+class TagCreate(TagBase):
+    pass
+
+class TagResponse(TagBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
 # ADD THESE NEW CLASSES IN THEIR PLACE
 class NoteBase(BaseModel):
     title: str
@@ -136,6 +171,7 @@ class NoteUpdate(BaseModel):
 
 class NoteResponse(NoteBase):
     id: int
+    tags: List[TagResponse] = []
     created_at: datetime.datetime
     updated_at: datetime.datetime
     user_id: int

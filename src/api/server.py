@@ -26,6 +26,7 @@ app.include_router(auth.router)
 app.include_router(calendar.router) # <-- NEW INCLUDE
 app.include_router(gmail.router)    # <-- NEW INCLUDE
 app.include_router(notifications.router)
+app.include_router(notes.router_tags)
 # --- Root Endpoint ---
 @app.get("/", tags=["Root"])
 def read_root():
