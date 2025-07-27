@@ -1,6 +1,7 @@
 # src/api/routers/agent.py
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel # <-- THIS IS THE FIX
 from sqlalchemy.orm import Session
 from typing import List
 import uuid
