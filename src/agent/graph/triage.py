@@ -39,6 +39,8 @@ def get_triage_agent_graph():
         - For other types, extract the main topic. Example: {{"topic": "Bus schedule update"}}
         - If no specific entities can be extracted, provide an empty dictionary: {{}}
 
+        **Crucially, the value for `extracted_entities` must be a valid JSON object/dictionary, NOT a stringified JSON.**
+
         Email Content:
         ---
         {email_content}

@@ -15,7 +15,7 @@ class TriageResult(BaseModel):
     urgency: int = Field(description="The urgency of the email on a scale of 1-10.")
     summary: str = Field(description="A one-sentence summary of the email's content.")
     action_required: bool = Field(description="True if a tool should be called, False otherwise.")
-    extracted_entities: Optional[dict] = Field(description="Extracted entities like dates, times, people, or task descriptions.")
+    extracted_entities: Optional[dict] = Field(description="A dictionary of extracted entities like dates or topics. MUST be a valid JSON object, not a string.")
 
 # --- NEW: State for the Triage Agent ---
 class TriageState(TypedDict):
