@@ -13,9 +13,11 @@ from src.database import crud, models
 from src.database.database import get_db
 from src.api.dependencies import get_current_user
 from src.agent.memory.manager import memory_manager
-from src.agent.graph.builder import agent_graph
+from src.agent.graph.builder import get_agent_graph
 from langchain_core.messages import HumanMessage
 from src.database.models import ChatMessageResponse
+import datetime
+
 
 router = APIRouter(
     prefix="/agent",
@@ -65,7 +67,7 @@ def search_long_term_memory_test(
 
 # --- The Future Agent Chat Endpoint (Placeholder) ---
 # We will build the real logic for this in Phase 3. For now, it's a placeholder.
-@router.post("/chat", response_model=ChatMessageResponse)
+@router.post("/chat")
 def chat_with_agent(
     request: ChatRequest,
     current_user: models.User = Depends(get_current_user)
@@ -74,24 +76,32 @@ def chat_with_agent(
     The primary endpoint for conversing with the Aura agent.
     Manages session history and invokes the LangGraph agent.
     """
+    # Use the request's session_id or generate a new one
     session_id = request.session_id or str(uuid.uuid4())
     
     # 1. Load the history for this session
     chat_history = memory_manager.get_chat_history(user_id=current_user.id, session_id=session_id)
     
-    # 2. Invoke the agent graph
+    # 2. Get the agent graph (it will be built on the first request)
+    agent_graph = get_agent_graph()
+    
+    # 3. Define the config for this run
+    config = {"configurable": {"user_id": current_user.id}}
+    
+    # 4. Invoke the agent graph with the message and config
     response = agent_graph.invoke({
         "messages": chat_history.messages + [HumanMessage(content=request.message)]
-    })
+    }, config=config)
     
     # The agent's final response is the last message in the output
     final_response_message = response['messages'][-1]
     
-    # 3. Save the user's message and the agent's final response to history
+    # 5. Save the user's message and the agent's final response to history
+    user_message_to_save = HumanMessage(content=request.message)
     memory_manager.add_chat_message(
         user_id=current_user.id,
         session_id=session_id,
-        message=HumanMessage(content=request.message)
+        message=user_message_to_save
     )
     memory_manager.add_chat_message(
         user_id=current_user.id,
@@ -99,10 +109,9 @@ def chat_with_agent(
         message=final_response_message
     )
 
-    # We need a way to return this to the user. We'll create a dummy ChatMessageResponse for now.
-    # In a real app, this would be more structured.
+    # Return a properly formatted response
     return models.ChatMessageResponse(
-        id=0, # Dummy ID
+        id=0, # This is a dummy ID as we don't need to return the DB id
         session_id=session_id,
         message=str(final_response_message.content),
         timestamp=datetime.datetime.now(datetime.timezone.utc)
