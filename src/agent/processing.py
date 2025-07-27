@@ -1,15 +1,20 @@
+# src/agent/processing.py
+
 import json
 import asyncio
-from .tools import gmail as gmail_tool
+
+# --- NEW IMPORTS ---
+from src.agent.tools import gmail as gmail_tools
+from src.agent.graph.triage import triage_agent_graph
 from src.database import crud, database
 from src.api.connection_manager import manager
 
 def process_new_email_notification(email: str, start_history_id: int):
     """
-    This function runs in the background. It fetches the new email(s),
-    orchestrates AI processing, and sends real-time notifications.
+    This function runs in the background. It is the main entry point for the proactive agent.
+    It fetches new emails and invokes the triage agent graph for each one.
     """
-    print(f"BACKGROUND_TASK: Processing started for {email} from historyId {start_history_id}")
+    print(f"PROACTIVE_AGENT: Processing started for {email} from historyId {start_history_id}")
     db = database.SessionLocal()
     try:
         # 1. Get the user from the database by their email
@@ -19,47 +24,63 @@ def process_new_email_notification(email: str, start_history_id: int):
             return
 
         # 2. Use the gmail_tool to fetch the actual new message(s)
-        new_messages, last_history_id = gmail_tool.fetch_new_messages_for_processing_from_api(
+        new_messages, last_history_id = gmail_tools.fetch_new_messages_for_processing_from_api(
             user_id=user.id,
             start_history_id=start_history_id
         )
 
         if not new_messages:
-            print(f"INFO: No new messages to process for user {user.id}.")
+            print(f"PROACTIVE_AGENT: No new messages to process for user {user.id}.")
             return
 
+        # 3. For each new message, invoke the triage agent
         for message in new_messages:
-            print(f"SUCCESS: Fetched new email for user {user.id}: '{message['subject']}'")
+            print(f"PROACTIVE_AGENT: Found new email for user {user.id}: '{message['subject']}'")
             
-            # --- This is where the "Agentic Logic" will go in the future ---
-            # For now, we are just creating and sending a simple notification.
-            # Example:
-            # email_body = gmail_tool.get_email_body(user_id=user.id, message_id=message['id'])
-            # summary = ai_model.summarize(email_body) 
-            # notification_payload = {"type": "email_summary", "data": summary}
-            # ---
+            # Get the full body of the email to provide context to the agent
+            email_body = gmail_tools.get_email_body.invoke({
+                "user_id": user.id,
+                "message_id": message['id']
+            })
+            
+            if email_body.startswith("Error:"):
+                print(f"WARN: Could not retrieve body for message {message['id']}. Skipping.")
+                continue
 
-            # 3. Create the notification payload to send to the client
-            notification_payload = {
-                "type": "new_email_notification",
-                "data": {
-                    "id": message.get('id'),
-                    "subject": message.get('subject'),
-                    "sender": message.get('sender')
-                }
+            full_email_content = f"From: {message['sender']}\nSubject: {message['subject']}\n\n{email_body}"
+
+            # 4. Invoke the Triage Agent Graph
+            initial_state = {
+                "user_id": user.id,
+                "email_content": full_email_content,
             }
-            
-            # 4. Send the notification via WebSocket
-            try:
-                # We are in a synchronous function, but manager.send_personal_message is async.
-                # asyncio.run() is the bridge that allows us to call and wait for the async code to finish.
+            final_state = triage_agent_graph.invoke(initial_state)
+
+            # 5. Send a notification to the user about the action taken
+            triage_result = final_state.get("triage_result")
+            if triage_result and triage_result.action_required:
+                tool_outputs = final_state.get("tool_outputs", [])
+                
+                # Formulate a summary of what the agent did
+                summary = (
+                    f"Aura took action on an email: '{message['subject']}'.\n"
+                    f"Triage: {triage_result.summary}\n"
+                    f"Action Result: {tool_outputs[0] if tool_outputs else 'No output.'}"
+                )
+
+                notification_payload = {
+                    "type": "proactive_agent_action",
+                    "data": {
+                        "summary": summary
+                    }
+                }
+                
+                # Send the notification via WebSocket
                 asyncio.run(manager.send_personal_message(
                     json.dumps(notification_payload),
                     user.id
                 ))
-                print(f"SUCCESS: Sent WebSocket notification to user {user.id}")
-            except Exception as e:
-                print(f"ERROR: Failed to send WebSocket message to user {user.id}. Details: {e}")
+                print(f"PROACTIVE_AGENT: Sent WebSocket notification to user {user.id}")
 
     finally:
         db.close()
