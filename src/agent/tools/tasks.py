@@ -1,92 +1,69 @@
-# Import the CRUD functions we want to use and the session management
-from src.database import crud
-from src.database.database import SessionLocal
+# src/agent/tools/tasks.py
 
-# --- Public Tool Functions ---
+from langchain_core.tools import tool
+from typing import List, Dict, Optional
+import datetime
+import uuid
+from src.database import crud, database, models
 
-def add_task(description: str) -> dict:
+@tool
+def create_task(user_id: int, description: str, priority: Optional[str] = "medium", due_date: Optional[str] = None) -> Dict:
     """
-    Adds a new task to the list by saving it to the database.
-
-    Args:
-        description: The description of the task.
-
-    Returns:
-        A dictionary representing the newly created task.
+    Creates a new task for a user. Use this to add a new item to the user's to-do list.
+    You can optionally provide a priority ('low', 'medium', 'high') and a due_date (in 'YYYY-MM-DDTHH:MM:SSZ' format).
     """
-    print(f"TOOL: add_task called with description: '{description}'")
-    db = SessionLocal()
+    db = database.SessionLocal()
     try:
-        # Call the CRUD function to create the task in the database
-        new_task = crud.create_task(db=db, description=description)
-        
-        # We return a dictionary, as this is a more portable format than a class object.
-        return {
-            "id": new_task.id,
-            "description": new_task.description,
-            "status": new_task.status,
-            "created_at": new_task.created_at.isoformat()
-        }
+        # Pydantic will handle parsing the ISO string to a datetime object
+        due_date_dt = datetime.datetime.fromisoformat(due_date.replace("Z", "+00:00")) if due_date else None
+        task_create = models.TaskCreate(description=description, priority=priority, due_date=due_date_dt)
+        db_task = crud.create_task(db=db, task=task_create, user_id=user_id)
+        # Use from_orm (or model_validate in Pydantic v2) to safely convert the SQLAlchemy object
+        return models.TaskResponse.from_orm(db_task).model_dump()
     finally:
         db.close()
 
-def list_tasks(status_filter: str = None) -> list[dict]:
+@tool
+def get_all_tasks(user_id: int) -> List[Dict]:
     """
-    Lists tasks from the database, optionally filtering by status.
-
-    Args:
-        status_filter: Optional. Either 'pending' or 'completed'.
-
-    Returns:
-        A list of task dictionaries.
+    Retrieves a list of all tasks for a user. Use this to see what is currently on the user's to-do list.
+    The tasks are intelligently sorted by status, due date, and priority.
     """
-    print(f"TOOL: list_tasks called with filter: '{status_filter}'")
-    db = SessionLocal()
+    db = database.SessionLocal()
     try:
-        if status_filter:
-            # Call the CRUD function to get tasks by status
-            tasks_from_db = crud.get_tasks_by_status(db=db, status=status_filter)
-        else:
-            # Call the CRUD function to get all tasks
-            tasks_from_db = crud.get_all_tasks(db=db)
-        
-        # Convert the list of Task objects into a list of dictionaries
-        return [
-            {
-                "id": task.id,
-                "description": task.description,
-                "status": task.status,
-                "created_at": task.created_at.isoformat()
-            }
-            for task in tasks_from_db
-        ]
+        tasks = crud.get_all_tasks(db, user_id=user_id)
+        return [models.TaskResponse.from_orm(task).model_dump() for task in tasks]
     finally:
         db.close()
 
-def mark_task_complete(task_id: str) -> dict | None:
+@tool
+def update_task(user_id: int, task_id: str, description: Optional[str] = None, status: Optional[str] = None, priority: Optional[str] = None, due_date: Optional[str] = None) -> Dict:
     """
-    Marks a task as 'completed' in the database.
-
-    Args:
-        task_id: The ID of the task to mark as complete.
-
-    Returns:
-        The updated task dictionary, or None if the task was not found.
+    Updates a task's attributes. You must provide the task_id.
+    Use this to change a task's description, mark it as 'completed', change its priority, or reschedule its due_date.
     """
-    print(f"TOOL: mark_task_complete called with ID: '{task_id}'")
-    db = SessionLocal()
+    db = database.SessionLocal()
     try:
-        # Call the CRUD function to update the task status
-        updated_task = crud.update_task_status(db=db, task_id=task_id, new_status="completed")
-        
-        if updated_task:
-            return {
-                "id": updated_task.id,
-                "description": updated_task.description,
-                "status": updated_task.status,
-                "created_at": updated_task.created_at.isoformat()
-            }
-        # If the task was not found, return None
-        return None
+        due_date_dt = datetime.datetime.fromisoformat(due_date.replace("Z", "+00:00")) if due_date else None
+        task_update = models.TaskUpdate(description=description, status=status, priority=priority, due_date=due_date_dt)
+        # Use exclude_unset=True so we only update provided fields
+        updated_task = crud.update_task(db, task_id=task_id, task_update=task_update, user_id=user_id)
+        if not updated_task:
+            return {"error": "Task not found."}
+        return models.TaskResponse.from_orm(updated_task).model_dump()
+    finally:
+        db.close()
+
+@tool
+def delete_task(user_id: int, task_id: str) -> str:
+    """
+    Deletes a task by its ID. Use this to permanently remove a task from the user's list.
+    """
+    db = database.SessionLocal()
+    try:
+        deleted = crud.delete_task_by_id(db, task_id=task_id, user_id=user_id)
+        if not deleted:
+            return f"Error: Task with ID '{task_id}' not found."
+        return f"Success: Task with ID '{task_id}' has been deleted."
     finally:
         db.close()

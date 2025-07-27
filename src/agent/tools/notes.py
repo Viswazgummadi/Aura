@@ -1,99 +1,105 @@
-# Import the CRUD functions we want to use and the session management
-from src.database import crud
-from src.database.database import SessionLocal
+# src/agent/tools/notes.py
 
-# --- Public Tool Functions ---
+from langchain_core.tools import tool
+from typing import List, Dict
+from src.database import crud, database, models
 
-def save_note(key: str, value: str) -> dict:
+@tool
+def create_note(user_id: int, title: str, content: str) -> Dict:
     """
-    Saves a new note or overwrites an existing one to the database.
-
-    Args:
-        key: The key to identify the note (e.g., "wifi password").
-        value: The information to be stored.
-
-    Returns:
-        A dictionary representing the newly created or updated note.
+    Creates a new note with a title and content for a specific user.
+    Use this to save information, ideas, or summaries.
+    Returns the created note as a dictionary.
     """
-    print(f"TOOL: save_note called with key: '{key}', value: '{value}'")
-    db = SessionLocal()
+    db = database.SessionLocal()
     try:
-        # Call the CRUD function to create or update the note in the database
-        db_note = crud.create_or_update_note(db=db, key=key, value=value)
-        
-        # Return a dictionary representation of the note
-        return {
-            "key": db_note.key,
-            "value": db_note.value,
-            "created_at": db_note.created_at.isoformat(),
-            "updated_at": db_note.updated_at.isoformat()
-        }
+        note_create = models.NoteCreate(title=title, content=content)
+        db_note = crud.create_note(db, note=note_create, user_id=user_id)
+        return models.NoteResponse.from_orm(db_note).model_dump()
     finally:
         db.close()
 
-def get_note(key: str) -> str | None:
-    """
-    Retrieves a note by its key from the database.
-
-    Args:
-        key: The key of the note to retrieve.
-
-    Returns:
-        The value of the note (string), or None if not found.
-    """
-    print(f"TOOL: get_note called with key: '{key}'")
-    db = SessionLocal()
+@tool
+def get_all_notes(user_id: int) -> List[Dict]:
+    """Retrieves a list of all notes for a specific user."""
+    db = database.SessionLocal()
     try:
-        # Call the CRUD function to get the note by key
-        db_note = crud.get_note_by_key(db=db, key=key)
-        
-        if db_note:
-            return db_note.value
-        return None
+        notes = crud.get_all_notes(db, user_id=user_id)
+        return [models.NoteResponse.from_orm(note).model_dump() for note in notes]
     finally:
         db.close()
 
-def list_notes() -> list[dict]:
+@tool
+def search_notes(user_id: int, query: str) -> List[Dict]:
     """
-    Lists all saved notes from the database.
-
-    Returns:
-        A list of dictionaries, each representing a note.
+    Searches the notes of a specific user for a given query string.
+    The search is case-insensitive and checks both the note titles and content.
     """
-    print("TOOL: list_notes called")
-    db = SessionLocal()
+    db = database.SessionLocal()
     try:
-        # Call the CRUD function to get all notes
-        notes_from_db = crud.get_all_notes(db=db)
-        
-        # Convert the list of Note objects into a list of dictionaries
-        return [
-            {
-                "key": note.key,
-                "value": note.value,
-                "created_at": note.created_at.isoformat(),
-                "updated_at": note.updated_at.isoformat()
-            }
-            for note in notes_from_db
-        ]
+        notes = crud.search_notes(db, query=query, user_id=user_id)
+        return [models.NoteResponse.from_orm(note).model_dump() for note in notes]
     finally:
         db.close()
 
-def delete_note(key: str) -> bool:
+@tool
+def update_note(user_id: int, note_id: int, title: str = None, content: str = None) -> Dict:
     """
-    Deletes a note by its key from the database.
-
-    Args:
-        key: The key of the note to delete.
-
-    Returns:
-        True if the note was deleted, False otherwise.
+    Updates a note's title or content. You must provide the note_id.
+    Only include the fields you want to change.
     """
-    print(f"TOOL: delete_note called with key: '{key}'")
-    db = SessionLocal()
+    db = database.SessionLocal()
     try:
-        # Call the CRUD function to delete the note
-        deleted = crud.delete_note_by_key(db=db, key=key)
-        return deleted
+        note_update = models.NoteUpdate(title=title, content=content)
+        updated_note = crud.update_note(db, note_id=note_id, note_update=note_update, user_id=user_id)
+        if not updated_note:
+            return {"error": f"Note with ID {note_id} not found."}
+        return models.NoteResponse.from_orm(updated_note).model_dump()
+    finally:
+        db.close()
+
+@tool
+def delete_note(user_id: int, note_id: int) -> str:
+    """Deletes a note by its ID. Use this to permanently remove a note."""
+    db = database.SessionLocal()
+    try:
+        deleted = crud.delete_note_by_id(db, note_id=note_id, user_id=user_id)
+        if not deleted:
+            return f"Error: Note with ID '{note_id}' not found."
+        return f"Success: Note with ID '{note_id}' has been deleted."
+    finally:
+        db.close()
+
+@tool
+def add_tag_to_note(user_id: int, note_id: int, tag_name: str) -> Dict:
+    """Adds a tag to a specific note for a user. e.g., 'work' or 'urgent'."""
+    db = database.SessionLocal()
+    try:
+        note = crud.add_tag_to_note(db, note_id=note_id, tag_name=tag_name, user_id=user_id)
+        if not note:
+            return {"error": "Note not found or could not add tag."}
+        return models.NoteResponse.from_orm(note).model_dump()
+    finally:
+        db.close()
+
+@tool
+def remove_tag_from_note(user_id: int, note_id: int, tag_id: int) -> Dict:
+    """Removes a tag from a specific note, using the note_id and the tag_id."""
+    db = database.SessionLocal()
+    try:
+        note = crud.remove_tag_from_note(db, note_id=note_id, tag_id=tag_id, user_id=user_id)
+        if not note:
+            return {"error": "Note or Tag association not found."}
+        return models.NoteResponse.from_orm(note).model_dump()
+    finally:
+        db.close()
+
+@tool
+def get_notes_by_tag(user_id: int, tag_name: str) -> List[Dict]:
+    """Gets all notes for a user that are labeled with a specific tag."""
+    db = database.SessionLocal()
+    try:
+        notes = crud.get_notes_by_tag_name(db, tag_name=tag_name, user_id=user_id)
+        return [models.NoteResponse.from_orm(note).model_dump() for note in notes]
     finally:
         db.close()
