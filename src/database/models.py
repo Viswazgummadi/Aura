@@ -84,6 +84,7 @@ class GoogleCredentials(Base):
     __tablename__ = "google_credentials"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
+    google_email = Column(String, index=True, nullable=True) # The user's actual Google email
     token = Column(Text, nullable=False)
     refresh_token = Column(String, nullable=True)
     token_uri = Column(String, nullable=True)

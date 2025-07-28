@@ -56,6 +56,8 @@ def save_google_credentials(
         db_creds.client_secret = token_data.get('client_secret')
         db_creds.scopes = scopes_str
         db_creds.expiry = token_data.get('expiry') # This expects a datetime object (from gcp_auth.py)
+        db_creds.google_email = token_data.get('google_email') # <-- ADD THIS LINE
+
     else:
         # Create new credentials
         db_creds = models.GoogleCredentials(
@@ -66,7 +68,8 @@ def save_google_credentials(
             client_id=token_data.get('client_id'),
             client_secret=token_data.get('client_secret'),
             scopes=scopes_str,
-            expiry=token_data.get('expiry')
+            expiry=token_data.get('expiry'),
+            google_email=token_data.get('google_email') # <-- ADD THIS LINE
         )
         db.add(db_creds)
     
@@ -380,4 +383,13 @@ def get_chat_history(db: Session, session_id: str, user_id: int) -> list[models.
         .filter(models.ChatMessage.session_id == session_id, models.ChatMessage.user_id == user_id)
         .order_by(models.ChatMessage.timestamp.asc())
         .all()
+    )
+def get_user_by_google_email(db: Session, google_email: str) -> models.User | None:
+    """Finds a user by their linked Google account email."""
+    # This query joins the tables to find the user associated with the Google credential
+    return (
+        db.query(models.User)
+        .join(models.GoogleCredentials)
+        .filter(models.GoogleCredentials.google_email == google_email)
+        .first()
     )

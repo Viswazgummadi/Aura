@@ -16,7 +16,7 @@ def process_new_email_notification(email: str, start_history_id: int):
     print(f"PROACTIVE_AGENT: Processing started for {email} from historyId {start_history_id}")
     db = database.SessionLocal()
     try:
-        user = crud.get_user_by_email(db, email=email)
+        user = crud.get_user_by_google_email(db, google_email=email)
         if not user:
             print(f"ERROR: No user found for email {email}. Cannot process notification.")
             return
