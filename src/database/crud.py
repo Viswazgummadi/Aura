@@ -361,7 +361,12 @@ def set_active_llm_model(db: Session, model_name: str) -> models.LLMModel | None
 def get_active_llm_model(db: Session) -> models.LLMModel | None:
     """Retrieves the currently active LLM for the agent to use."""
     return db.query(models.LLMModel).filter(models.LLMModel.is_active == True).first()
-
+def update_user_watch_history_id(db: Session, user_id: int, new_history_id: str):
+    """Updates the last processed historyId for a user's Gmail watch."""
+    creds = get_google_credentials_by_user_id(db, user_id)
+    if creds:
+        creds.watch_history_id = new_history_id
+        db.commit()
 def add_chat_message(db: Session, session_id: str, message_json_dict: dict, user_id: int) -> models.ChatMessage:
     """Adds a new chat message to the database."""
     db_message = models.ChatMessage(

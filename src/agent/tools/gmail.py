@@ -7,7 +7,7 @@ import time
 from langchain_core.tools import tool
 from typing import List, Dict
 from googleapiclient.errors import HttpError
-
+from src.database import crud, database
 from src.core.gcp_auth import build_google_service
 
 # ==============================================================================
@@ -141,50 +141,69 @@ def _get_message_metadata(message_id: str, service, user_id: int) -> dict | None
         return None
 
 def fetch_new_messages_for_processing_from_api(user_id: int, start_history_id: int | None = None) -> tuple[list, int]:
-    # This function is unchanged
-    service = build_google_service('gmail', 'v1', user_id=user_id)
-    current_gmail_api_history_id = get_latest_history_id_from_gmail_api(user_id=user_id)
-    messages_to_process_raw = []
-    effective_start_history_id = start_history_id if start_history_id is not None else 0
-    if effective_start_history_id >= current_gmail_api_history_id:
-        return [], current_gmail_api_history_id
+    """
+    This is the core function for the proactive agent.
+    It fetches all new history records since the last time it checked.
+    """
+    db = database.SessionLocal()
     try:
-        next_page_token = None
-        while True:
-            history_response = service.users().history().list(
-                userId='me', startHistoryId=effective_start_history_id, pageToken=next_page_token,
-            ).execute()
-            history_list = history_response.get('history', [])
-            if not history_list and not history_response.get('nextPageToken'): break
-            for history_record in history_list:
-                messages_in_record = []
-                if 'messagesAdded' in history_record:
-                    messages_in_record.extend([item['message'] for item in history_record['messagesAdded']])
-                if 'labelsAdded' in history_record:
-                    for label_event in history_record['labelsAdded']:
-                        if 'INBOX' in label_event.get('labelIds', []):
-                             messages_in_record.extend(label_event['messages'])
-                processed_ids_in_record = set()
-                for message_summary in messages_in_record:
-                    msg_id = message_summary['id']
-                    if msg_id in processed_ids_in_record: continue
-                    processed_ids_in_record.add(msg_id)
-                    metadata = _get_message_metadata(msg_id, service, user_id)
-                    if metadata:
-                        messages_to_process_raw.append(metadata)
-            next_page_token = history_response.get('nextPageToken')
-            if not next_page_token: break
-            time.sleep(0.1)
+        service = build_google_service('gmail', 'v1', user_id=user_id)
+        
+        # --- THIS IS THE FIX ---
+        # 1. Get the last known history ID FROM OUR DATABASE.
+        creds = crud.get_google_credentials_by_user_id(db, user_id)
+        if not creds or not creds.watch_history_id:
+            raise Exception(f"Cannot fetch new messages: No stored watch_history_id for user {user_id}.")
+        
+        last_known_history_id = creds.watch_history_id
+        print(f"PROACTIVE_AGENT: Last known historyId from DB is {last_known_history_id}.")
+
+        # 2. Fetch all history since that last known point.
+        history_response = service.users().history().list(
+            userId='me',
+            startHistoryId=last_known_history_id,
+        ).execute()
+        # --- END OF FIX ---
+        
+        messages_to_process_raw = []
+        
+        # Process the history records (this part is largely the same)
+        history_list = history_response.get('history', [])
+        for history_record in history_list:
+            messages_in_record = []
+            if 'messagesAdded' in history_record:
+                messages_in_record.extend([item['message'] for item in history_record['messagesAdded']])
+            if 'labelsAdded' in history_record:
+                for label_event in history_record['labelsAdded']:
+                    if 'INBOX' in label_event.get('labelIds', []):
+                         messages_in_record.extend(label_event['messages'])
+            processed_ids_in_record = set()
+            for message_summary in messages_in_record:
+                msg_id = message_summary['id']
+                if msg_id in processed_ids_in_record: continue
+                processed_ids_in_record.add(msg_id)
+                metadata = _get_message_metadata(msg_id, service, user_id)
+                if metadata:
+                    messages_to_process_raw.append(metadata)
+        
+        # The new "current" history ID is the one from the history response.
+        current_history_id = history_response.get('historyId')
+        if current_history_id:
+            # 3. IMPORTANT: Update our database with the new latest historyId.
+            crud.update_user_watch_history_id(db, user_id, current_history_id)
+            print(f"PROACTIVE_AGENT: Updated DB with new historyId {current_history_id} for user {user_id}.")
+
         messages_to_process_raw.sort(key=lambda x: (x['historyId'], x['id']))
-        return messages_to_process_raw, current_gmail_api_history_id
+        return messages_to_process_raw, current_history_id
+
     except HttpError as error:
+        # The fallback logic is still valuable
         if error.resp.status == 404 and "startHistoryId" in str(error):
-            print(f"WARNING: history.list 404 for startHistoryId {effective_start_history_id} for user {user_id}. History too old or invalid. Performing full unread sync.")
+            print(f"WARNING: history.list 404. Performing full unread sync.")
             return _fetch_unread_and_get_history_id_fallback(service, user_id)
         raise
-    except Exception as e:
-        print(f"An unexpected error occurred in fetch_new_messages_for_processing_from_api for user {user_id}: {e}")
-        raise e
+    finally:
+        db.close()
 
 def _fetch_messages_from_list_api(service, user_id: int, label_ids: list, max_results: int = 50) -> list:
     # This helper is unchanged
