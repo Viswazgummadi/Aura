@@ -142,32 +142,35 @@ def _get_message_metadata(message_id: str, service, user_id: int) -> dict | None
 
 def fetch_new_messages_for_processing_from_api(user_id: int, start_history_id: int | None = None) -> tuple[list, int]:
     """
-    This is the core function for the proactive agent.
-    It fetches all new history records since the last time it checked.
+    This is the core stateful function for the proactive agent.
+    It fetches all new history records since the last processed ID stored in the database.
     """
     db = database.SessionLocal()
     try:
         service = build_google_service('gmail', 'v1', user_id=user_id)
         
-        # --- THIS IS THE FIX ---
         # 1. Get the last known history ID FROM OUR DATABASE.
         creds = crud.get_google_credentials_by_user_id(db, user_id)
-        if not creds or not creds.watch_history_id:
-            raise Exception(f"Cannot fetch new messages: No stored watch_history_id for user {user_id}.")
-        
-        last_known_history_id = creds.watch_history_id
-        print(f"PROACTIVE_AGENT: Last known historyId from DB is {last_known_history_id}.")
+        if not creds:
+            print(f"ERROR: No Google credentials found for user {user_id}. Cannot fetch messages.")
+            return [], None
+
+        # If the watch hasn't been set yet, use the notification's historyId as the start.
+        last_known_history_id = creds.watch_history_id or start_history_id
+        if not last_known_history_id:
+             print(f"ERROR: No historyId available for user {user_id}. Cannot fetch messages.")
+             return [], None
+
+        print(f"PROACTIVE_AGENT: Fetching history since last known ID: {last_known_history_id}.")
 
         # 2. Fetch all history since that last known point.
         history_response = service.users().history().list(
             userId='me',
             startHistoryId=last_known_history_id,
         ).execute()
-        # --- END OF FIX ---
         
         messages_to_process_raw = []
         
-        # Process the history records (this part is largely the same)
         history_list = history_response.get('history', [])
         for history_record in history_list:
             messages_in_record = []
@@ -186,9 +189,8 @@ def fetch_new_messages_for_processing_from_api(user_id: int, start_history_id: i
                 if metadata:
                     messages_to_process_raw.append(metadata)
         
-        # The new "current" history ID is the one from the history response.
         current_history_id = history_response.get('historyId')
-        if current_history_id:
+        if current_history_id and str(current_history_id) != str(last_known_history_id):
             # 3. IMPORTANT: Update our database with the new latest historyId.
             crud.update_user_watch_history_id(db, user_id, current_history_id)
             print(f"PROACTIVE_AGENT: Updated DB with new historyId {current_history_id} for user {user_id}.")
@@ -197,7 +199,6 @@ def fetch_new_messages_for_processing_from_api(user_id: int, start_history_id: i
         return messages_to_process_raw, current_history_id
 
     except HttpError as error:
-        # The fallback logic is still valuable
         if error.resp.status == 404 and "startHistoryId" in str(error):
             print(f"WARNING: history.list 404. Performing full unread sync.")
             return _fetch_unread_and_get_history_id_fallback(service, user_id)

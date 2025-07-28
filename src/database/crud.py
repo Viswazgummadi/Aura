@@ -389,6 +389,7 @@ def get_chat_history(db: Session, session_id: str, user_id: int) -> list[models.
         .order_by(models.ChatMessage.timestamp.asc())
         .all()
     )
+
 def get_user_by_google_email(db: Session, google_email: str) -> models.User | None:
     """Finds a user by their linked Google account email."""
     # This query joins the tables to find the user associated with the Google credential
