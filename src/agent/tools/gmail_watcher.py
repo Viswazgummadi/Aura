@@ -1,66 +1,94 @@
+# src/agent/tools/gmail_watcher.py
+
 from googleapiclient.errors import HttpError
+import datetime
+
 from src.core.gcp_auth import build_google_service
-from src.core import config # <-- NEW IMPORT: for GCP_PROJECT_ID and GCP_PUBSUB_TOPIC_ID
+from src.core import config
+# --- NEW IMPORTS ---
+from src.database import crud, database
 
-# These constants should be loaded from config.py from now on
-# GCP_PROJECT_ID = "aura-466616" 
-# GCP_PUBSUB_TOPIC_ID = "aura-gmail-notifications" 
-
-def watch_gmail_inbox(user_id: int) -> dict | None: # <-- NEW: user_id argument
+def watch_gmail_inbox(user_id: int) -> dict:
     """
-    Tells the Gmail API to send push notifications to a Pub/Sub topic
-    whenever there's a change in the user's inbox.
-    
-    Args:
-        user_id (int): The ID of the AIBuddies user whose Gmail to watch.
-
-    Returns:
-        A dictionary with watch details (e.g., expiration, historyId) on success.
+    This is now an idempotent "Sync & Heal" function.
+    1. Checks the database for an active watch.
+    2. If active and not expiring soon, it does nothing.
+    3. If expired or non-existent, it creates a new one and saves its state.
+    4. It always stops any previous watch before starting a new one to prevent ghosts.
     """
-    print(f"TOOL: watch_gmail_inbox called for user ID: {user_id}")
+    print(f"TOOL: Syncing Gmail watch for user ID: {user_id}")
+    db = database.SessionLocal()
     try:
-        # Pass the user_id to build_google_service
+        creds = crud.get_google_credentials_by_user_id(db, user_id)
+        if not creds:
+            raise Exception("Cannot initiate watch: User has no Google credentials.")
+
+        # Check if a watch is active and not expiring in the next day
+        if creds.watch_expiry_timestamp:
+            now = datetime.datetime.now(datetime.timezone.utc)
+            if creds.watch_expiry_timestamp > (now + datetime.timedelta(days=1)):
+                print(f"INFO: Watch is already active for user {user_id}. Expires at {creds.watch_expiry_timestamp}.")
+                return {"status": "already_active", "expiry": creds.watch_expiry_timestamp.isoformat()}
+
+        # --- SELF-HEALING ---
+        # Before starting a new watch, always try to stop any potential old "ghost" one.
+        # This is a robust way to clean up previous, out-of-sync states.
+        print(f"INFO: Attempting to stop any existing watch for user {user_id} before starting a new one.")
+        _stop_watch_internal(user_id)
+
+        # Now, create the new watch
         service = build_google_service('gmail', 'v1', user_id=user_id)
-        
         request_body = {
-            'topicName': f'projects/{config.GCP_PROJECT_ID}/topics/{config.GCP_PUBSUB_TOPIC_ID}' # <-- Use config
+            'topicName': f'projects/{config.GCP_PROJECT_ID}/topics/{config.GCP_PUBSUB_TOPIC_ID}'
         }
-        
         response = service.users().watch(userId='me', body=request_body).execute()
         
-        print(f"Gmail watch initiated successfully for user {user_id}: {response}")
+        # Save the new state to the database
+        creds.watch_history_id = response['historyId']
+        # Google returns expiration in milliseconds, convert to a proper datetime
+        creds.watch_expiry_timestamp = datetime.datetime.fromtimestamp(int(response['expiration']) / 1000, tz=datetime.timezone.utc)
+        db.commit()
+        
+        print(f"SUCCESS: New Gmail watch initiated for user {user_id}. State saved to DB.")
         return response
-    except HttpError as error:
-        print(f"An HTTP error occurred while watching Gmail inbox for user {user_id}: {error.resp.status}")
-        print(f"Error details: {error._get_reason()}")
-        raise error
-    except Exception as e:
-        print(f"An unexpected error occurred while watching Gmail inbox for user {user_id}: {e}")
-        raise e
 
-def stop_gmail_inbox_watch(user_id: int) -> bool: # <-- NEW: user_id argument
-    """
-    Stops sending push notifications for the user's Gmail inbox.
-    
-    Args:
-        user_id (int): The ID of the AIBuddies user whose Gmail watch to stop.
+    finally:
+        db.close()
 
-    Returns:
-        True on successful stop, False otherwise.
+def stop_gmail_inbox_watch(user_id: int) -> bool:
     """
-    print(f"TOOL: stop_gmail_inbox_watch called for user ID: {user_id}")
+    Stops the watch and clears the state from the database.
+    """
+    print(f"TOOL: Stopping Gmail watch for user ID: {user_id}")
+    db = database.SessionLocal()
     try:
-        # Pass the user_id to build_google_service
+        success = _stop_watch_internal(user_id)
+        
+        # Clear the state from our database
+        creds = crud.get_google_credentials_by_user_id(db, user_id)
+        if creds:
+            creds.watch_history_id = None
+            creds.watch_expiry_timestamp = None
+            db.commit()
+            print(f"INFO: Watch state cleared from DB for user {user_id}.")
+        return success
+    finally:
+        db.close()
+
+def _stop_watch_internal(user_id: int) -> bool:
+    """Internal function to call the Google API to stop the watch."""
+    try:
         service = build_google_service('gmail', 'v1', user_id=user_id)
-        
-        response = service.users().stop(userId='me').execute()
-        
-        print(f"Gmail watch stopped successfully for user {user_id}: {response}")
+        service.users().stop(userId='me').execute()
+        print(f"INFO: Google API confirmed watch stopped for user {user_id}.")
         return True
     except HttpError as error:
-        print(f"An HTTP error occurred while stopping Gmail inbox watch for user {user_id}: {error.resp.status}")
-        print(f"Error details: {error._get_reason()}")
-        raise error
+        # A 404 error means there was no watch to stop, which is a success for our purposes.
+        if error.resp.status == 404:
+            print(f"INFO: No active watch found for user {user_id} to stop (This is OK).")
+            return True
+        print(f"WARN: An HTTP error occurred while stopping Gmail watch for user {user_id}: {error}")
+        return False
     except Exception as e:
-        print(f"An unexpected error occurred while stopping Gmail inbox watch for user {user_id}: {e}")
-        raise e
+        print(f"WARN: An unexpected error occurred while stopping watch for user {user_id}: {e}")
+        return False

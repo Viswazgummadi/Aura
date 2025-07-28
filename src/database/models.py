@@ -91,6 +91,8 @@ class GoogleCredentials(Base):
     client_secret = Column(String, nullable=False)
     scopes = Column(Text, nullable=False)
     expiry = Column(DateTime, nullable=True)
+    watch_history_id = Column(String, nullable=True) # The historyId from the watch response
+    watch_expiry_timestamp = Column(DateTime, nullable=True) # The expiration timestamp
     user = relationship("User", back_populates="google_credentials")
 
     def __repr__(self):
