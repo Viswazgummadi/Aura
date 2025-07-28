@@ -10,6 +10,7 @@ from langchain.tools.render import render_text_description
 from src.agent.graph.state import TriageState, TriageResult
 from src.core.model_manager import model_manager
 from src.agent.graph.builder import all_tools # Import the master tool list
+import datetime
 
 # --- Global variable to hold our compiled graph ---
 _triage_agent_graph = None
@@ -55,9 +56,28 @@ def get_triage_agent_graph():
         """
         )
         planning_prompt_template = ChatPromptTemplate.from_template(
-            "You are an expert planning agent. Based on the triage of an email, choose the single best tool to call.\n"
-            "Available Tools:\n{tools}\n\nTriage Result:\n---\n{triage_result}\n---\n"
-            "Respond with a single, valid JSON tool call. If no action is needed, respond with an empty JSON object {{}}."
+        """
+        You are a meticulous and intelligent planning agent. Your goal is to construct a perfect tool call based on the user's needs.
+
+        **Triage Analysis:**
+        The email has been classified as: {triage_result}
+
+        **Full Email Content:**
+        ---
+        {email_content}
+        ---
+
+        **Available Tools:**
+        {tools}
+
+        **Your Task:**
+        Based on the Triage Analysis AND the full email content, construct a single, valid JSON tool call to address the user's needs.
+        - You MUST use the full email content to find the specific arguments for the tool (like summary, dates, times, or descriptions).
+        - If the triage classified the email as a `DEADLINE_TASK`, you MUST call the `create_task` tool.
+        - If the triage classified the email as a `MEETING_REQUEST`, you MUST call the `create_calendar_event` tool.
+        - Be intelligent in parsing dates and times from the text. The current time is {current_time}.
+        - If you are absolutely certain that no tool call can or should be made, respond with an empty JSON object {{}}.
+        """
         )
         planning_agent = planning_prompt_template | llm.bind_tools(all_tools)
 
@@ -101,12 +121,26 @@ def get_triage_agent_graph():
 
 
         def planning_node(state: TriageState):
+            """Second node: Decides which tool to call based on the triage result and full email content."""
             if not state["triage_result"].action_required:
+                print("TRIAGE_AGENT: No action required.")
                 return {"plan": []}
+            
+            print("TRIAGE_AGENT: Planning tool call...")
             tool_description = render_text_description(all_tools)
+            
+            # --- THIS IS THE FIX ---
+            # We now provide the full email content and current time to the planner.
+            current_time = datetime.datetime.now(datetime.timezone.utc).isoformat()
             plan = planning_agent.invoke({
-                "triage_result": state["triage_result"].dict(), "tools": tool_description
+                "triage_result": state["triage_result"].dict(),
+                "email_content": state["email_content"], # Give the planner the raw material
+                "tools": tool_description,
+                "current_time": current_time
             })
+            # --- END OF FIX ---
+            
+            print(f"TRIAGE_AGENT: Plan generated: {plan.tool_calls}")
             return {"plan": plan.tool_calls}
 
         def tool_executor_node(state: TriageState):
