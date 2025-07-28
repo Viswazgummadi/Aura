@@ -29,15 +29,22 @@ def get_triage_agent_graph():
 
         triage_prompt = ChatPromptTemplate.from_template(
         """
-        You are an expert email triaging assistant. Analyze the following email content and classify it according to the provided JSON schema.
-        Your goal is to determine if an action is required and extract all necessary information for that action.
+        You are a world-class, proactive executive assistant. Your primary function is to analyze email content and translate it into a structured, actionable plan. You must be thorough, precise, and use your intelligence to infer missing information.
+
+        **Your Goal:**
+        Analyze the email content and populate the JSON schema. Your main goal is to determine if an action is required and to extract or infer every piece of information needed for that action.
+
+        **Your Core Principles of Inference:**
+        - **Assume Standard Deadlines:** If a deadline is not specified for a task, assume a reasonable default, such as the end of the next business day.
+        - **Infer Priority from Context:** Analyze the language of the email. If it contains words like "urgent," "important," or "asap," you MUST set the `urgency` score to 8 or higher. If the language is casual or informational, a lower urgency is appropriate.
+        - **Default to Action:** If an email contains a clear task or meeting request, `action_required` should be `True` even if some details are missing. It is your job to fill in the blanks with reasonable defaults.
 
         **Instructions for `extracted_entities`:**
-        - This field MUST be a dictionary.
-        - For a DEADLINE_TASK, extract the task description and due date. Example: {{"task_description": "Submit report", "due_date": "YYYY-MM-DDTHH:MM:SSZ"}}
-        - For a MEETING_REQUEST, extract the title, attendees, and proposed time. Example: {{"title": "Project Sync", "attendees": ["bob@example.com"], "proposed_time": "..."}}
-        - For other types, extract the main topic. Example: {{"topic": "Bus schedule update"}}
-        - If no specific entities can be extracted, provide an empty dictionary: {{}}
+        - This field MUST be a valid JSON dictionary.
+        - Be aggressive in your extraction. It is better to extract partial information than nothing at all.
+        - **For a DEADLINE_TASK:** You MUST extract `task_description` and `due_date`. Example: {{"task_description": "Submit the quarterly report", "due_date": "Friday at 5pm"}}
+        - **For a MEETING_REQUEST:** You MUST extract `title`, and if available, `attendees`, and `proposed_time`. Example: {{"title": "Project Sync", "proposed_time": "next Tuesday at 2pm"}}
+        - If you are absolutely certain no entities can be extracted, provide an empty dictionary: {{}}
 
         **Crucially, the value for `extracted_entities` must be a valid JSON object/dictionary, NOT a stringified JSON.**
 
