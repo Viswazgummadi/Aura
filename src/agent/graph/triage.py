@@ -1,10 +1,12 @@
 # src/agent/graph/triage.py
 
+import json
+import pydantic # Import pydantic for the validation error
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, END
 from langchain.tools.render import render_text_description
-import json 
+
 from src.agent.graph.state import TriageState, TriageResult
 from src.core.model_manager import model_manager
 from src.agent.graph.builder import all_tools # Import the master tool list
@@ -21,12 +23,10 @@ def get_triage_agent_graph():
     if _triage_agent_graph is None:
         print("INFO: Building Triage Agent graph for the first time...")
         
-        # 1. Initialize the LLM (This now happens safely inside the function)
         active_model = model_manager.get_active_model()
         llm = ChatGoogleGenerativeAI(model=active_model.model_name)
         structured_llm = llm.with_structured_output(TriageResult)
 
-        # 2. Define Prompts
         triage_prompt = ChatPromptTemplate.from_template(
         """
         You are an expert email triaging assistant. Analyze the following email content and classify it according to the provided JSON schema.
@@ -54,28 +54,44 @@ def get_triage_agent_graph():
         )
         planning_agent = planning_prompt_template | llm.bind_tools(all_tools)
 
-        # 3. Define Nodes
         def triage_email_node(state: TriageState):
-            """First node: Analyzes the email and produces a structured TriageResult."""
+            """
+            First node: Analyzes the email and produces a structured TriageResult.
+            This node is built to be resilient with retries and robust parsing.
+            """
             print("TRIAGE_AGENT: Triaging email...")
             chain = triage_prompt | structured_llm
-            result = chain.invoke({"email_content": state["email_content"]})
             
-            # --- THIS IS THE FINAL FIX ---
-            # We defensively parse the LLM's output to make the agent resilient.
-            if isinstance(result.extracted_entities, str):
+            # --- THE BULLETPROOF FIX ---
+            # Add a retry loop to handle intermittent LLM failures or formatting errors.
+            for i in range(3):
                 try:
-                    # If the LLM gave us a string, try to load it as a dictionary.
-                    result.extracted_entities = json.loads(result.extracted_entities)
-                    print("INFO: Successfully parsed stringified extracted_entities.")
-                except json.JSONDecodeError:
-                    # If parsing fails, it's not a valid dict. Default to empty.
-                    print(f"WARN: Could not parse extracted_entities string: {result.extracted_entities}")
-                    result.extracted_entities = {}
-            # --- END OF FIX ---
+                    result = chain.invoke({"email_content": state["email_content"]})
+                    
+                    # Defensively parse the LLM's output.
+                    if isinstance(result.extracted_entities, str):
+                        # Clean up potential markdown and newlines before parsing.
+                        cleaned_string = result.extracted_entities.strip().replace('```json', '').replace('```', '').strip()
+                        result.extracted_entities = json.loads(cleaned_string)
+                    
+                    # If we get here, validation was successful.
+                    print(f"TRIAGE_AGENT: Triage result: {result}")
+                    return {"triage_result": result}
 
-            print(f"TRIAGE_AGENT: Triage result: {result}")
-            return {"triage_result": result}
+                except (json.JSONDecodeError, pydantic.ValidationError) as e:
+                    # If parsing or validation fails, we log the error and try again.
+                    print(f"WARN: Attempt {i+1} failed. Pydantic/JSON error: {e}. Retrying...")
+                    if i == 2: # If it's the last attempt, we give up.
+                        print("ERROR: Failed to triage email after multiple retries.")
+                        # We create a safe, empty result to prevent the whole graph from crashing.
+                        empty_result = TriageResult(
+                            email_type="INFO_UPDATE", urgency=1, summary="Could not process email.",
+                            action_required=False, extracted_entities={}
+                        )
+                        return {"triage_result": empty_result}
+            
+            raise Exception("Failed to triage email after multiple retries.")
+
 
         def planning_node(state: TriageState):
             if not state["triage_result"].action_required:
@@ -99,11 +115,9 @@ def get_triage_agent_graph():
                 return {"tool_outputs": [result]}
             return {"tool_outputs": [{"error": "Tool not found."}]}
 
-        # 4. Define Edges
         def should_execute_tool(state: TriageState):
             return "execute_tool" if state.get("plan") and state["plan"] else END
 
-        # 5. Build Graph
         graph_builder = StateGraph(TriageState)
         graph_builder.add_node("triage_email", triage_email_node)
         graph_builder.add_node("plan_action", planning_node)
