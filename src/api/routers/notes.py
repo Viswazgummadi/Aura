@@ -36,7 +36,7 @@ def update_existing_note(note_id: int, note_update: NoteUpdate, current_user: Us
 @router.delete("/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_a_note(note_id: int, current_user: User = Depends(get_current_user)):
     result = notes_tools.delete_note.invoke({"user_id": current_user.id, "note_id": note_id})
-    if "Error" in result:
+    if "error" in result:
         raise HTTPException(status_code=404, detail=result)
     return
 

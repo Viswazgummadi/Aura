@@ -3,15 +3,15 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
-
+from src.api.dependencies import get_current_admin_user
 from src.database import crud, models
 from src.database.database import get_db
 
 router = APIRouter(
     prefix="/admin",
-    tags=["Admin - Model Management"]
+    tags=["Admin - Model Management"],
+    dependencies=[Depends(get_current_admin_user)]
 )
-
 # --- Provider Endpoints ---
 @router.post("/providers", response_model=models.LLMProviderResponse)
 def create_provider(provider: models.LLMProviderCreate, db: Session = Depends(get_db)):

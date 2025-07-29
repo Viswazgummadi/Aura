@@ -1,3 +1,4 @@
+# src/api/server.py
 from fastapi import FastAPI
 from src.database.database import create_database_and_tables
 from .routers import admin

@@ -1,13 +1,13 @@
 # src/agent/tools/calendar.py
 
 from langchain_core.tools import tool
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 from googleapiclient.errors import HttpError
 from src.core.gcp_auth import build_google_service
 import datetime
 
 @tool
-def list_upcoming_events(user_id: int, max_results: int = 10) -> List[Dict]:
+def list_upcoming_events(user_id: int, max_results: int = 10) -> Union[List[Dict], Dict]:
     """
     Lists the user's upcoming Google Calendar events.
     Use this to check the user's schedule.
@@ -23,7 +23,8 @@ def list_upcoming_events(user_id: int, max_results: int = 10) -> List[Dict]:
         ).execute()
         return events_result.get("items", [])
     except Exception as e:
-        return [{"error": f"An unexpected error occurred: {e}"}]
+        # <-- CHANGED: Return a dictionary directly, not a list containing a dictionary.
+        return {"error": f"An unexpected error occurred: {e}"}
 
 @tool
 def create_calendar_event(user_id: int, summary: str, start_time_iso: str, end_time_iso: str, description: Optional[str] = None, location: Optional[str] = None) -> Dict:
@@ -31,6 +32,7 @@ def create_calendar_event(user_id: int, summary: str, start_time_iso: str, end_t
     Creates a new event on the user's Google Calendar.
     `start_time_iso` and `end_time_iso` must be in 'YYYY-MM-DDTHH:MM:SSZ' format.
     """
+    # This tool was already perfectly structured. No changes needed.
     try:
         service = build_google_service('calendar', 'v3', user_id=user_id)
         event_body = {
@@ -51,6 +53,7 @@ def update_calendar_event(user_id: int, event_id: str, summary: str = None, star
     Updates an existing Google Calendar event. You must provide the event_id.
     Only include the fields you want to change.
     """
+    # This tool was already perfectly structured. No changes needed.
     try:
         service = build_google_service('calendar', 'v3', user_id=user_id)
         event = service.events().get(calendarId='primary', eventId=event_id).execute()
@@ -69,18 +72,20 @@ def update_calendar_event(user_id: int, event_id: str, summary: str = None, star
         return {"error": f"An unexpected error occurred: {e}"}
 
 @tool
-def delete_calendar_event(user_id: int, event_id: str) -> str:
+def delete_calendar_event(user_id: int, event_id: str) -> Dict:
     """
     Deletes an event from the user's Google Calendar by its ID.
     """
     try:
         service = build_google_service('calendar', 'v3', user_id=user_id)
         service.events().delete(calendarId='primary', eventId=event_id).execute()
-        return f"Success: Event with ID '{event_id}' has been deleted."
+        # <-- CHANGED: Return a structured success dictionary.
+        return {"status": "success", "message": f"Event with ID '{event_id}' has been deleted."}
     except HttpError as e:
+        # <-- CHANGED: Return a structured error dictionary.
         if e.resp.status in [404, 410]: # Not Found or Gone
-            return f"Error: Event with ID '{event_id}' not found or already deleted."
-        return f"Error: An API error occurred: {e}"
+            return {"error": f"Event with ID '{event_id}' not found or already deleted."}
+        return {"error": f"An API error occurred: {e}"}
     except Exception as e:
-        return f"Error: An unexpected error occurred: {e}"
-
+        # <-- CHANGED: Return a structured error dictionary.
+        return {"error": f"An unexpected error occurred: {e}"}

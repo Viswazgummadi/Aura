@@ -1,9 +1,11 @@
+# src/api/dependencies.py
 from fastapi import Depends, HTTPException, status,Query
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from src.database import crud, models
 from src.database.database import get_db
 from src.core import security
+# from src.api.dependencies import get_current_user
 
 # Instantiate the OAuth2PasswordBearer for dependency injection
 # The tokenUrl points to our login endpoint where clients can get a token
@@ -54,7 +56,18 @@ async def get_current_user(
         )
     
     return user
-
+async def get_current_admin_user(
+    current_user: models.User = Depends(get_current_user)
+) -> models.User:
+    """
+    Dependency that ensures the current user is an administrator.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The user does not have administrative privileges",
+        )
+    return current_user
 async def get_current_user_from_ws(
     token: str = Query(...), # The token will be passed as a query parameter
     db: Session = Depends(get_db)

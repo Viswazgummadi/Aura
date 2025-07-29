@@ -31,9 +31,12 @@ class ChatRequest(BaseModel):
 
 class MemoryRequest(BaseModel):
     content: str
+    
+class ChatResponse(BaseModel):
+    session_id: str
+    agent_message: str
+    timestamp: datetime.datetime 
 
-# --- Temporary Test Endpoints for Memory ---
-# These endpoints allow us to directly test the MemoryManager before the full agent is built.
 
 @router.post("/test/long_term_memory", status_code=status.HTTP_201_CREATED)
 def add_to_long_term_memory_test(
@@ -110,9 +113,8 @@ def chat_with_agent(
     )
 
     # Return a properly formatted response
-    return models.ChatMessageResponse(
-        id=0, # This is a dummy ID as we don't need to return the DB id
+    return ChatResponse(
         session_id=session_id,
-        message=str(final_response_message.content),
-        timestamp=datetime.datetime.now(datetime.timezone.utc)
+        agent_message=str(final_response_message.content),
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
     )

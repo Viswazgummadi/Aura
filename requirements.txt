@@ -1,4 +1,5 @@
-# Web Server
+#/requireements.txt
+# Web Framework
 fastapi
 uvicorn[standard]
 
@@ -7,25 +8,24 @@ langchain
 langchain-core
 langchain-google-genai
 langgraph
+google-generativeai
+chromadb
+langchain-community
 
 # Database
 sqlalchemy
 alembic
+psycopg2-binary
 
-# Google APIs (UPDATED TO LATEST STABLE AND AVAILABLE VERSIONS)
+# Google APIs
 google-api-python-client==2.176.0
 google-auth==2.29.0
 google-auth-httplib2==0.2.0
-google-auth-oauthlib==1.2.2 # <-- CORRECTED VERSION TO THE LATEST AVAILABLE
+google-auth-oauthlib==1.2.2
 
-# Utilities
+# Utilities & Security
 python-dotenv
 httpx
 passlib[bcrypt]
 python-jose[cryptography]
 python-multipart
-google-generativeai
-langchain              
-langchain-community   
-chromadb           
-langchain-google-genai 

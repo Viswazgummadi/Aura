@@ -1,8 +1,10 @@
+#database/crud.py
+
 import uuid
 import datetime
 import json
 from typing import List, Optional
-
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 import secrets
 from . import models
@@ -112,20 +114,35 @@ def get_task_by_id(db: Session, task_id: str, user_id: int) -> models.Task | Non
     """Retrieves a single task by its unique ID, ensuring it belongs to the user."""
     return db.query(models.Task).filter(models.Task.id == task_id, models.Task.user_id == user_id).first()
 
-def get_all_tasks(db: Session, user_id: int, skip: int = 0, limit: int = 100) -> list[models.Task]:
+def get_all_tasks(
+    db: Session, 
+    user_id: int, 
+    skip: int = 0, 
+    limit: int = 100,
+    status: Optional[str] = None, # <-- NEW: Optional status filter
+    priority: Optional[str] = None # <-- NEW: Optional priority filter
+) -> list[models.Task]:
     """
-    Retrieves all tasks for a specific user, intelligently sorted.
+    Retrieves all tasks for a specific user, with optional filtering, and intelligent sorting.
     - Pending tasks are shown first.
     - They are sorted by due date (tasks without a due date are last).
     - Finally, they are sorted by priority.
     """
+    # Start with the base query for the user
+    query = db.query(models.Task).filter(models.Task.user_id == user_id)
+
+    # Apply filters if they are provided
+    if status:
+        query = query.filter(models.Task.status == status)
+    if priority:
+        query = query.filter(models.Task.priority == priority)
+
+    # Apply the existing intelligent sorting, offset, and limit
     return (
-        db.query(models.Task)
-        .filter(models.Task.user_id == user_id)
-        .order_by(
-            models.Task.status.desc(), # 'pending' comes before 'completed'
+        query.order_by(
+            models.Task.status.desc(),
             models.Task.due_date.asc().nullslast(),
-            models.Task.priority.desc() # Assumes priority is text, e.g., 'high', 'medium', 'low'
+            models.Task.priority.desc()
         )
         .offset(skip)
         .limit(limit)
@@ -149,25 +166,47 @@ def create_task(db: Session, task: models.TaskCreate, user_id: int) -> models.Ta
     db.refresh(db_task)
     return db_task
 
+def create_task_batch(db: Session, tasks: list[models.TaskCreate], user_id: int) -> list[models.Task]:
+    """
+    Creates multiple tasks in a single database transaction.
+    This is more efficient than creating them one by one.
+    """
+    db_tasks = []
+    for task_data in tasks:
+        # Generate a unique ID for each new task
+        new_task_id = str(uuid.uuid4())[:8]
+        
+        # Create the SQLAlchemy model instance
+        db_task = models.Task(
+            id=new_task_id,
+            user_id=user_id,
+            **task_data.model_dump(exclude_unset=True) # Unpack data from Pydantic model
+        )
+        db_tasks.append(db_task)
+
+    # Use db.add_all() to add all new task objects to the session
+    db.add_all(db_tasks)
+    db.commit()
+    
+    # We don't call db.refresh() on a list. The data is already correct.
+    return db_tasks
+
+
 def update_task(db: Session, task_id: str, task_update: models.TaskUpdate, user_id: int) -> models.Task | None:
     """A flexible update function for any task attribute."""
     db_task = get_task_by_id(db, task_id, user_id)
     if db_task:
+        # THE FIX: Get the update data, excluding any fields that were not set.
+        # This ensures we only update the attributes the user actually provided.
         update_data = task_update.model_dump(exclude_unset=True)
+        
         for key, value in update_data.items():
             setattr(db_task, key, value)
+            
         db.commit()
         db.refresh(db_task)
     return db_task
 
-def delete_task_by_id(db: Session, task_id: str, user_id: int) -> bool:
-    """Deletes a task by its ID."""
-    db_task = get_task_by_id(db, task_id, user_id)
-    if db_task:
-        db.delete(db_task)
-        db.commit()
-        return True
-    return False
 def delete_task_by_id(db: Session, task_id: str, user_id: int) -> bool:
     """
     Deletes a task from the database by its ID, ensuring it belongs to the user.
@@ -398,4 +437,22 @@ def get_user_by_google_email(db: Session, google_email: str) -> models.User | No
         .join(models.GoogleCredentials)
         .filter(models.GoogleCredentials.google_email == google_email)
         .first()
+    )
+    
+def search_notes(db: Session, query: str, user_id: int) -> list[models.Note]:
+    """
+    Searches for notes belonging to a user where the query string is found
+    in either the title or the content, case-insensitively.
+    """
+    search_query = f"%{query}%"
+    return (
+        db.query(models.Note)
+        .filter(
+            models.Note.user_id == user_id,
+            or_(
+                models.Note.title.ilike(search_query),
+                models.Note.content.ilike(search_query)
+            )
+        )
+        .all()
     )

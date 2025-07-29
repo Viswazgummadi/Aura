@@ -1,3 +1,5 @@
+#database/models.py
+
 import datetime
 from sqlalchemy import (
     Column,
@@ -72,6 +74,7 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
+    is_admin = Column(Boolean, default=False, nullable=False)
     tasks = relationship("Task", back_populates="owner")
     notes = relationship("Note", back_populates="owner")
     google_credentials = relationship("GoogleCredentials", back_populates="user", uselist=False)
@@ -122,8 +125,12 @@ class Task(Base):
 
     created_at = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc))
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    parent_id = Column(String, ForeignKey("tasks.id"), nullable=True)
+    sub_tasks = relationship("Task")
     owner = relationship("User", back_populates="tasks")
-
+    parent = relationship("Task", remote_side=[id], back_populates="sub_tasks")
+    
+    owner = relationship("User", back_populates="tasks")
     def __repr__(self):
         return f"<Task(id='{self.id}', description='{self.description[:20]}...', status='{self.status}', user_id={self.user_id})>"
 
@@ -175,8 +182,10 @@ class TaskBase(BaseModel):
 class TaskCreate(TaskBase):
     # Make priority and due_date optional during creation, with sensible defaults
     priority: Optional[str] = "medium"
+    status: Optional[str] = "pending" 
     # The frontend should send due_date as an ISO 8601 string (e.g., "2025-12-31T23:59:59Z")
     due_date: Optional[datetime.datetime] = None
+    parent_id: Optional[str] = None
 class TaskUpdate(BaseModel):
     # For updates, all fields are optional
     description: Optional[str] = None
@@ -190,7 +199,8 @@ class TaskResponse(TaskBase):
     due_date: Optional[datetime.datetime]
     created_at: datetime.datetime
     user_id: int
-
+    parent_id: Optional[str] = None # <-- ADD THIS LINE
+    sub_tasks: List['TaskResponse'] = []
     class Config:
         from_attributes = True
 class APIKeyBase(BaseModel):

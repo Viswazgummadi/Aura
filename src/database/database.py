@@ -1,11 +1,15 @@
+#database/database.py
+import os
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 # --- Configuration ---
+load_dotenv()
 
 # This is the path to our SQLite database file.
 # It will be created in the root directory of our project as 'database.db'.
-SQLALCHEMY_DATABASE_URL = "sqlite:///./database.db"
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./database.db")
 
 # --- Engine Setup ---
 
@@ -14,7 +18,7 @@ SQLALCHEMY_DATABASE_URL = "sqlite:///./database.db"
 # The 'connect_args' is needed specifically for SQLite to allow it to be
 # used in a multi-threaded environment like a web server.
 engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+    SQLALCHEMY_DATABASE_URL
 )
 
 # --- Session Setup ---

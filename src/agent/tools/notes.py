@@ -59,14 +59,16 @@ def update_note(user_id: int, note_id: int, title: str = None, content: str = No
         db.close()
 
 @tool
-def delete_note(user_id: int, note_id: int) -> str:
+def delete_note(user_id: int, note_id: int) -> Dict: # <-- Change return type hint to Dict
     """Deletes a note by its ID. Use this to permanently remove a note."""
     db = database.SessionLocal()
     try:
         deleted = crud.delete_note_by_id(db, note_id=note_id, user_id=user_id)
         if not deleted:
-            return f"Error: Note with ID '{note_id}' not found."
-        return f"Success: Note with ID '{note_id}' has been deleted."
+            # Standardized error format
+            return {"error": f"Note with ID '{note_id}' not found."}
+        # Structured success message
+        return {"status": "success", "message": f"Note with ID '{note_id}' has been deleted."}
     finally:
         db.close()
 
