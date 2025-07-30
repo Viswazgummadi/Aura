@@ -10,7 +10,8 @@ import secrets
 from . import models
 from src.core.security import get_password_hash
 from src.core.config import DateTimeEncoder # <-- NEW IMPORT: Our custom JSON encoder
-
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 # --- User CRUD Functions (existing, no changes) ---
 def get_user_by_email(db: Session, email: str) -> models.User | None:
     return db.query(models.User).filter(models.User.email == email).first()
@@ -45,6 +46,8 @@ def save_google_credentials(
     
     # Store the entire token_data dictionary as a JSON string using our custom encoder
     token_json_to_save = json.dumps(token_data, cls=DateTimeEncoder) # <-- THE FIX IS HERE: Use custom encoder
+    print("Saving token_json_to_save:", token_json_to_save)
+
     
     # For scopes, ensure it's a comma-separated string if it comes as a list
     scopes_str = ','.join(token_data.get('scopes', [])) if isinstance(token_data.get('scopes'), list) else token_data.get('scopes', '')
@@ -115,29 +118,32 @@ def get_task_by_id(db: Session, task_id: str, user_id: int) -> models.Task | Non
     return db.query(models.Task).filter(models.Task.id == task_id, models.Task.user_id == user_id).first()
 
 def get_all_tasks(
-    db: Session, 
-    user_id: int, 
-    skip: int = 0, 
+    db: Session,
+    user_id: int,
+    skip: int = 0,
     limit: int = 100,
-    status: Optional[str] = None, # <-- NEW: Optional status filter
-    priority: Optional[str] = None # <-- NEW: Optional priority filter
+    status: Optional[str] = None,
+    priority: Optional[str] = None
 ) -> list[models.Task]:
     """
-    Retrieves all tasks for a specific user, with optional filtering, and intelligent sorting.
-    - Pending tasks are shown first.
-    - They are sorted by due date (tasks without a due date are last).
-    - Finally, they are sorted by priority.
+    Retrieves top-level tasks for a user, with optional filtering and intelligent sorting.
+    Sub-tasks will be nested within their parents and not returned at the top level.
     """
-    # Start with the base query for the user
+    # --- THIS IS THE FIX ---
+
+    # 1. Start with the base query. This ALWAYS runs.
     query = db.query(models.Task).filter(models.Task.user_id == user_id)
 
-    # Apply filters if they are provided
+    # 2. Add the filter to only get top-level tasks. This ALWAYS runs.
+    query = query.filter(models.Task.parent_id == None)
+
+    # 3. Incrementally add the optional filters if they exist.
     if status:
         query = query.filter(models.Task.status == status)
     if priority:
         query = query.filter(models.Task.priority == priority)
 
-    # Apply the existing intelligent sorting, offset, and limit
+    # 4. Apply sorting and limits to the final, constructed query.
     return (
         query.order_by(
             models.Task.status.desc(),
@@ -456,3 +462,155 @@ def search_notes(db: Session, query: str, user_id: int) -> list[models.Note]:
         )
         .all()
     )
+def link_note_to_task(db: Session, note_id: int, task_id: str, user_id: int) -> models.Note | None:
+    """Adds an association between a note and a task, ensuring both belong to the user."""
+    # Retrieve the note and task, ensuring they belong to the current user
+    db_note = get_note_by_id(db, note_id=note_id, user_id=user_id)
+    db_task = get_task_by_id(db, task_id=task_id, user_id=user_id)
+    
+    if db_note and db_task:
+        # Check if the link already exists to avoid duplicates
+        if db_task not in db_note.tasks:
+            db_note.tasks.append(db_task)
+            db.commit()
+            db.refresh(db_note)
+        return db_note
+    return None
+
+def unlink_note_from_task(db: Session, note_id: int, task_id: str, user_id: int) -> models.Note | None:
+    """Removes an association between a note and a task."""
+    db_note = get_note_by_id(db, note_id=note_id, user_id=user_id)
+    db_task = get_task_by_id(db, task_id=task_id, user_id=user_id)
+    
+    if db_note and db_task:
+        # Check if the link exists before trying to remove it
+        if db_task in db_note.tasks:
+            db_note.tasks.remove(db_task)
+            db.commit()
+            db.refresh(db_note)
+        return db_note
+    return None
+async def create_oauth_state_async(db: AsyncSession, user_id: int) -> models.OAuthState:
+    state_value = secrets.token_urlsafe(32)
+    db_oauth_state = models.OAuthState(user_id=user_id, state_value=state_value)
+    db.add(db_oauth_state)
+    await db.commit()
+    await db.refresh(db_oauth_state)
+    return db_oauth_state
+
+async def get_oauth_state_by_value_async(db: AsyncSession, state_value: str) -> models.OAuthState | None:
+    result = await db.execute(select(models.OAuthState).filter(models.OAuthState.state_value == state_value))
+    return result.scalars().first()
+
+async def delete_oauth_state_async(db: AsyncSession, state_value: str) -> bool:
+    db_oauth_state = await get_oauth_state_by_value_async(db, state_value)
+    if db_oauth_state:
+        await db.delete(db_oauth_state)
+        await db.commit()
+        return True
+    return False
+
+async def save_google_credentials_async(db: AsyncSession, user_id: int, token_data: dict) -> models.GoogleCredentials:
+    result = await db.execute(select(models.GoogleCredentials).filter(models.GoogleCredentials.user_id == user_id))
+    db_creds = result.scalars().first()
+    
+    token_json_to_save = json.dumps(token_data, cls=DateTimeEncoder)
+    scopes_str = ','.join(token_data.get('scopes', []))
+
+    if db_creds:
+        db_creds.token = token_json_to_save
+        db_creds.access_token = token_data.get('access_token')
+        db_creds.refresh_token = token_data.get('refresh_token')
+        db_creds.expiry = token_data.get('expiry')
+        db_creds.google_email = token_data.get('google_email')
+    else:
+        db_creds = models.GoogleCredentials(
+            user_id=user_id,
+            token=token_json_to_save,
+            access_token=token_data.get('access_token'),
+            refresh_token=token_data.get('refresh_token'),
+            token_uri=token_data.get('token_uri'),
+            client_id=token_data.get('client_id'),
+            client_secret=token_data.get('client_secret'),
+            scopes=scopes_str,
+            expiry=token_data.get('expiry'),
+            google_email=token_data.get('google_email')
+        )
+        db.add(db_creds)
+    
+    await db.commit()
+    await db.refresh(db_creds)
+    return db_creds
+async def get_user_by_id_async(db: AsyncSession, user_id: int) -> models.User | None:
+    # db.get is the modern, async-native way to retrieve an object by its primary key.
+    return await db.get(models.User, user_id)
+
+def save_or_update_google_credentials(db: Session, user_id: int, creds_data: dict) -> models.GoogleCredentials:
+    """Saves or updates Google credentials using specific columns for a single source of truth."""
+    db_creds = get_google_credentials_by_user_id(db, user_id)
+    
+    # Ensure scopes are a space-separated string
+    scopes_str = ' '.join(creds_data.get('scopes', [])) if isinstance(creds_data.get('scopes'), list) else creds_data.get('scopes', '')
+
+    if db_creds:
+        # Update existing credentials
+        print(f"DEBUG (CRUD-Sync): Updating creds for user {user_id}. Has new refresh_token: {creds_data.get('refresh_token') is not None}")
+        db_creds.token=creds_data['token']
+        db_creds.access_token = creds_data['access_token']
+        print(f"access_token here in ===== save or update google: {db_creds.access_token}")
+        # IMPORTANT: Only update refresh_token if a new one is provided.
+        if new_refresh_token := creds_data.get('refresh_token'):
+            db_creds.refresh_token = new_refresh_token
+        db_creds.expiry = creds_data['expiry']
+        db_creds.scopes = scopes_str
+    else:
+        # Create new credentials
+        print(f"DEBUG (CRUD-Sync): Creating new creds for user {user_id}. Has refresh_token: {creds_data.get('refresh_token') is not None}")
+        db_creds = models.GoogleCredentials(
+            user_id=user_id,
+            google_email=creds_data['google_email'],
+            access_token=creds_data['access_token'],
+            refresh_token=creds_data.get('refresh_token'),
+            token_uri=creds_data['token_uri'],
+            client_id=creds_data['client_id'],
+            client_secret=creds_data['client_secret'],
+            scopes=scopes_str,
+            expiry=creds_data['expiry']
+        )
+        db.add(db_creds)
+    
+    db.commit()
+    db.refresh(db_creds)
+    return db_creds
+async def save_or_update_google_credentials_async(db: AsyncSession, user_id: int, creds_data: dict) -> models.GoogleCredentials:
+    """Asynchronously saves or updates Google credentials using specific columns."""
+    result = await db.execute(select(models.GoogleCredentials).filter(models.GoogleCredentials.user_id == user_id))
+    db_creds = result.scalars().first()
+    
+    scopes_str = ' '.join(creds_data.get('scopes', [])) if isinstance(creds_data.get('scopes'), list) else creds_data.get('scopes', '')
+
+    if db_creds:
+        print(f"DEBUG (CRUD-Async): Updating creds for user {user_id}. Has new refresh_token: {creds_data.get('refresh_token') is not None}")
+        db_creds.access_token = creds_data['access_token']
+        if new_refresh_token := creds_data.get('refresh_token'):
+            db_creds.refresh_token = new_refresh_token
+        db_creds.expiry = creds_data['expiry']
+        db_creds.scopes = scopes_str
+    else:
+        print(f"DEBUG (CRUD-Async): Creating new creds for user {user_id}. Has refresh_token: {creds_data.get('refresh_token') is not None}")
+        db_creds = models.GoogleCredentials(
+            user_id=user_id,
+            google_email=creds_data['google_email'],
+            access_token=creds_data['access_token'],
+            refresh_token=creds_data.get('refresh_token'),
+            token_uri=creds_data['token_uri'],
+            client_id=creds_data['client_id'],
+            client_secret=creds_data['client_secret'],
+            scopes=scopes_str,
+            expiry=creds_data['expiry']
+        )
+        db.add(db_creds)
+        
+    await db.commit()
+    await db.refresh(db_creds)
+    return db_creds

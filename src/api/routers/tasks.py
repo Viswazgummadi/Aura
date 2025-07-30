@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from src.database.models import TaskCreate, TaskResponse, TaskUpdate, User
 from src.api.dependencies import get_current_user
 from src.agent.tools import tasks as tasks_tools
-from typing import Optional
+from typing import Optional, List
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
@@ -44,7 +44,27 @@ def get_all_user_tasks(
         tool_input["priority"] = priority
         
     return tasks_tools.get_all_tasks.invoke(tool_input)
-
+@router.post("/batch", response_model=List[TaskResponse], status_code=status.HTTP_201_CREATED)
+def create_new_tasks_batch(tasks: List[TaskCreate], current_user: User = Depends(get_current_user)):
+    """
+    Creates multiple tasks for the current user in a single batch operation.
+    """
+    # The Pydantic model `List[TaskCreate]` has already validated the incoming list of tasks.
+    # We need to convert this list of Pydantic models into a list of simple dictionaries
+    # for the tool's invoke method.
+    tasks_as_dicts = [task.model_dump(exclude_unset=True) for task in tasks]
+    
+    # Handle the due_date format conversion for each task in the list
+    for task_dict in tasks_as_dicts:
+        if 'due_date' in task_dict and task_dict['due_date']:
+            task_dict['due_date'] = task_dict['due_date'].isoformat().replace('+00:00', 'Z')
+            
+    tool_input = {
+        "user_id": current_user.id,
+        "tasks": tasks_as_dicts
+    }
+    
+    return tasks_tools.create_task_batch.invoke(tool_input)
 @router.put("/{task_id}", response_model=TaskResponse)
 def update_a_task(task_id: str, task_update: TaskUpdate, current_user: User = Depends(get_current_user)):
     tool_input = task_update.model_dump(exclude_unset=True)

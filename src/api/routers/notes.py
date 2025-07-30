@@ -39,7 +39,29 @@ def delete_a_note(note_id: int, current_user: User = Depends(get_current_user)):
     if "error" in result:
         raise HTTPException(status_code=404, detail=result)
     return
+@router.post("/{note_id}/tasks/{task_id}", response_model=NoteResponse)
+def link_task_to_a_note(note_id: int, task_id: str, current_user: User = Depends(get_current_user)):
+    """Links a task to a note."""
+    result = notes_tools.link_task_to_note.invoke({
+        "user_id": current_user.id,
+        "note_id": note_id,
+        "task_id": task_id
+    })
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
 
+@router.delete("/{note_id}/tasks/{task_id}", response_model=NoteResponse)
+def unlink_task_from_a_note(note_id: int, task_id: str, current_user: User = Depends(get_current_user)):
+    """Unlinks a task from a note."""
+    result = notes_tools.unlink_task_from_note.invoke({
+        "user_id": current_user.id,
+        "note_id": note_id,
+        "task_id": task_id
+    })
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
 @router.post("/{note_id}/tags", response_model=NoteResponse)
 def add_a_tag_to_a_note(note_id: int, tag: TagCreate, current_user: User = Depends(get_current_user)):
     result = notes_tools.add_tag_to_note.invoke({

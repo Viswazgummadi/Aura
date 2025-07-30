@@ -14,6 +14,8 @@ from sqlalchemy.orm import declarative_base, relationship
 from pydantic import BaseModel
 from typing import List, Optional
 from sqlalchemy import Table
+from sqlalchemy.sql import func
+
 Base = declarative_base()
 note_tag_association_table = Table(
     "note_tag_association",
@@ -21,7 +23,12 @@ note_tag_association_table = Table(
     Column("note_id", Integer, ForeignKey("notes.id"), primary_key=True),
     Column("tag_id", Integer, ForeignKey("tags.id"), primary_key=True),
 )
-
+note_task_association_table = Table(
+    "note_task_association",
+    Base.metadata,
+    Column("note_id", Integer, ForeignKey("notes.id"), primary_key=True),
+    Column("task_id", String, ForeignKey("tasks.id"), primary_key=True), # Use String for task_id
+)
 class Tag(Base):
     __tablename__ = "tags"
 
@@ -87,27 +94,35 @@ class GoogleCredentials(Base):
     __tablename__ = "google_credentials"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
-    google_email = Column(String, index=True, nullable=True) # The user's actual Google email
-    token = Column(Text, nullable=False)
-    refresh_token = Column(String, nullable=True)
-    token_uri = Column(String, nullable=True)
+    
+    # --- REFACTORED COLUMNS ---
+    google_email = Column(String, index=True, nullable=False)
+    token = Column(Text, nullable=True) 
+    access_token = Column(Text, nullable=False)
+    refresh_token = Column(Text, nullable=True) # Stays nullable, as it might not be present on all grants
+    token_uri = Column(String, nullable=False)
     client_id = Column(String, nullable=False)
     client_secret = Column(String, nullable=False)
-    scopes = Column(Text, nullable=False)
-    expiry = Column(DateTime, nullable=True)
-    watch_history_id = Column(String, nullable=True) # The historyId from the watch response
-    watch_expiry_timestamp = Column(DateTime, nullable=True) # The expiration timestamp
+    scopes = Column(Text, nullable=False) # Store as a space-separated string
+    expiry = Column(DateTime(timezone=True), nullable=False) # Use timezone-aware DateTime
+    
+    # These are for the watcher, they are fine
+    watch_history_id = Column(String, nullable=True)
+    watch_expiry_timestamp = Column(DateTime, nullable=True)
+
     user = relationship("User", back_populates="google_credentials")
 
     def __repr__(self):
-        return f"<GoogleCredentials(user_id={self.user_id}, expiry={self.expiry})>"
+        # Add a debug-friendly representation
+        has_refresh = 'YES' if self.refresh_token else 'NO'
+        return f"<GoogleCredentials(user_id={self.user_id}, google_email='{self.google_email}', expiry={self.expiry}, has_refresh_token='{has_refresh}')>"
 
 class OAuthState(Base):
     __tablename__ = "oauth_states"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     state_value = Column(String, unique=True, nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     user = relationship("User", back_populates="oauth_states")
 
     def __repr__(self):
@@ -118,40 +133,39 @@ class Task(Base):
     id = Column(String, primary_key=True, index=True)
     description = Column(String, nullable=False)
     status = Column(String, default="pending", nullable=False)
-
-    priority = Column(String, default="medium", nullable=False) # e.g., "low", "medium", "high"
-    due_date = Column(DateTime, nullable=True, index=True) # Optional due date, indexed for faster sorting
-
-
+    priority = Column(String, default="medium", nullable=False)
+    due_date = Column(DateTime, nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc))
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     parent_id = Column(String, ForeignKey("tasks.id"), nullable=True)
-    sub_tasks = relationship("Task")
     owner = relationship("User", back_populates="tasks")
+    sub_tasks = relationship("Task", back_populates="parent", cascade="all, delete-orphan")
     parent = relationship("Task", remote_side=[id], back_populates="sub_tasks")
-    
     owner = relationship("User", back_populates="tasks")
+    notes = relationship(
+        "Note", secondary=note_task_association_table, back_populates="tasks"
+    )
     def __repr__(self):
         return f"<Task(id='{self.id}', description='{self.description[:20]}...', status='{self.status}', user_id={self.user_id})>"
 
 class Note(Base):
     __tablename__ = "notes"
     
-    # The new structure with a proper ID, title, and content
     id = Column(Integer, primary_key=True, autoincrement=True) 
     title = Column(String, index=True, nullable=False)
-    content = Column(Text, nullable=True) # Content can be optional
-    
+    content = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc))
     updated_at = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc), onupdate=datetime.datetime.now(datetime.timezone.utc))
-    
-    # The note still belongs to a user
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
     tags = relationship(
         "Tag", secondary=note_tag_association_table, back_populates="notes"
     )
-
     owner = relationship("User", back_populates="notes")
+    tasks = relationship(
+        "Task", secondary=note_task_association_table, back_populates="notes"
+    )
+    
     def __repr__(self):
         return f"<Note(id={self.id}, title='{self.title[:20]}...', user_id={self.user_id})>"
 
@@ -199,10 +213,14 @@ class TaskResponse(TaskBase):
     due_date: Optional[datetime.datetime]
     created_at: datetime.datetime
     user_id: int
-    parent_id: Optional[str] = None # <-- ADD THIS LINE
-    sub_tasks: List['TaskResponse'] = []
+    parent_id: Optional[str] = None
+    sub_tasks: List['TaskResponseShallow'] = []
+    notes: List['NoteResponseShallow'] = []
+
     class Config:
         from_attributes = True
+
+
 class APIKeyBase(BaseModel):
     key: str
 
@@ -281,14 +299,17 @@ class NoteUpdate(BaseModel):
 
 class NoteResponse(NoteBase):
     id: int
-    tags: List[TagResponse] = []
+    tags: List['TagResponse'] = []
+    
+    # 4. UPDATE this field to use the new shallow model
+    tasks: List['TaskResponseShallow'] = []
+    
     created_at: datetime.datetime
     updated_at: datetime.datetime
     user_id: int
 
     class Config:
         from_attributes = True
-
 # --- NEW PYDANTIC SCHEMAS FOR CALENDAR AND GMAIL ---
 
 # Calendar Schemas
@@ -332,3 +353,24 @@ class GmailSendRequest(BaseModel):
     to: str
     subject: str
     body: str
+class NoteResponseShallow(NoteBase):
+    id: int
+    # Notice it does NOT have a 'tasks' field
+    tags: List['TagResponse'] = []
+    
+    class Config:
+        from_attributes = True
+
+# 2. ADD a "shallow" Task model for use inside Notes and Sub-tasks
+class TaskResponseShallow(TaskBase):
+    id: str
+    status: str
+    priority: str
+    parent_id: Optional[str] = None
+    # Notice it does NOT have 'sub_tasks' or 'notes' fields
+    
+    class Config:
+        from_attributes = True
+NoteResponse.update_forward_refs()
+TaskResponse.update_forward_refs()
+NoteResponseShallow.update_forward_refs()

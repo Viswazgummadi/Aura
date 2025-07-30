@@ -1,6 +1,7 @@
 import uvicorn
 from src.api.server import app
 
+
 if __name__ == "__main__":
     # This block runs when you execute 'python main.py'
     # It starts the Uvicorn server, telling it where to find our FastAPI app.

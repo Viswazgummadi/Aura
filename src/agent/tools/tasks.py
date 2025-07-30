@@ -28,7 +28,26 @@ def create_task(user_id: int, description: str, priority: Optional[str] = "mediu
         return models.TaskResponse.from_orm(db_task).model_dump()
     finally:
         db.close()
-
+@tool
+def create_task_batch(user_id: int, tasks: List[Dict]) -> List[Dict]:
+    """
+    Creates multiple tasks for a user in a single operation.
+    The `tasks` argument should be a list of dictionaries, where each dictionary
+    represents a task and can contain 'description', 'priority', 'status', 'parent_id', etc.
+    Use this to efficiently create multiple tasks at once.
+    """
+    db = database.SessionLocal()
+    try:
+        # Convert the list of dictionaries into a list of Pydantic models
+        task_create_models = [models.TaskCreate(**task) for task in tasks]
+        
+        # Call the new batch CRUD function
+        created_tasks = crud.create_task_batch(db, tasks=task_create_models, user_id=user_id)
+        
+        # Convert the created SQLAlchemy objects back into dictionaries for the response
+        return [models.TaskResponse.from_orm(task).model_dump() for task in created_tasks]
+    finally:
+        db.close()
 @tool
 def get_all_tasks(user_id: int, status: Optional[str] = None, priority: Optional[str] = None) -> List[Dict]:
     """

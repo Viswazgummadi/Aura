@@ -13,10 +13,11 @@ from src.core.model_manager import model_manager
 # --- The Master Tool List (Single Source of Truth) ---
 from src.agent.tools.notes import (
     create_note, get_all_notes, search_notes, update_note,
-    delete_note, add_tag_to_note, remove_tag_from_note, get_notes_by_tag
+    delete_note, add_tag_to_note, remove_tag_from_note, get_notes_by_tag,
+    link_task_to_note, unlink_task_from_note
 )
 from src.agent.tools.tasks import (
-    create_task, get_all_tasks, update_task, delete_task
+    create_task, get_all_tasks, update_task, delete_task,create_task_batch 
 )
 from src.agent.tools.calendar import (
     list_upcoming_events, create_calendar_event, update_calendar_event, delete_calendar_event
@@ -28,7 +29,8 @@ from src.agent.tools.gmail import (
 all_tools = [
     create_note, get_all_notes, search_notes, update_note,
     delete_note, add_tag_to_note, remove_tag_from_note, get_notes_by_tag,
-    create_task, get_all_tasks, update_task, delete_task,
+    create_task, get_all_tasks, update_task, delete_task,create_task_batch,
+    link_task_to_note, unlink_task_from_note,
     list_upcoming_events, create_calendar_event, update_calendar_event, delete_calendar_event,
     list_unread_emails, get_email_body, send_email, mark_email_as_read,
 ]

@@ -1,136 +1,141 @@
-# src/core/gcp_auth.py
+# In src/core/gcp_auth.py
+
+# Keep all your existing imports, then replace the functions:
 import os.path
 import json
 from datetime import datetime, timedelta, timezone
 import httpx
 
-# These new imports are for decoding the id_token
 from google.oauth2 import id_token
 from google.auth.transport import requests
+from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import Flow
-from googleapiclient.errors import HttpError
-
 from src.core import config
 from src.database import crud, database, models
-from src.core.utils import to_rfc3339
 
+# SCOPES are unchanged
 SCOPES = [
-    "openid",
-    "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/userinfo.profile",
-    "https://www.googleapis.com/auth/calendar",
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/gmail.settings.basic",
-    "https://www.googleapis.com/auth/gmail.send"
+    "openid", "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.settings.basic", "https://www.googleapis.com/auth/gmail.send"
 ]
 
 def build_google_service(service_name: str, version: str, user_id: int):
-    """Builds and returns an authorized Google API service object."""
+    """Builds and returns an authorized Google API service object (REFACTORED)."""
     db = database.SessionLocal()
     try:
         db_creds = crud.get_google_credentials_by_user_id(db, user_id)
         if not db_creds:
-            raise Exception(f"No Google credentials for user {user_id}. Link account.")
+            raise Exception(f"No Google credentials for user {user_id}. Please link your Google account.")
 
-        token_data = json.loads(db_creds.token)
-        expiry_dt_naive = None
-        if expiry_str := token_data.get('expiry', ''):
-            iso_str = expiry_str.replace("Z", "+00:00")
-            aware_dt = datetime.fromisoformat(iso_str)
-            expiry_dt_naive = aware_dt.replace(tzinfo=None)
-
+        # Build Credentials object directly from the DB columns
         creds = Credentials(
-            token=token_data['access_token'], refresh_token=token_data.get('refresh_token'),
-            token_uri=token_data.get('token_uri'), client_id=token_data.get('client_id'),
-            client_secret=token_data.get('client_secret'), scopes=token_data.get('scopes', []),
-            expiry=expiry_dt_naive
+            token=db_creds.access_token,
+            refresh_token=db_creds.refresh_token,
+            token_uri=db_creds.token_uri,
+            client_id=db_creds.client_id,
+            client_secret=db_creds.client_secret,
+            scopes=db_creds.scopes.split(' '),
+            expiry=db_creds.expiry # Already a timezone-aware datetime from DB
         )
 
         if creds.expired and creds.refresh_token:
             print(f"DEBUG: Google creds for user {user_id} expired. Refreshing...")
             try:
                 creds.refresh(GoogleAuthRequest())
-                new_aware_expiry = creds.expiry.replace(tzinfo=timezone.utc)
-                updated_token_data = {
-                    "access_token": creds.token, "refresh_token": creds.refresh_token,
-                    "token_uri": creds.token_uri, "client_id": creds.client_id or config.GOOGLE_CLIENT_ID,
-                    "client_secret": creds.client_secret or config.GOOGLE_CLIENT_SECRET,
-                    "scopes": creds.scopes, "expiry": new_aware_expiry,
-                    "google_email": token_data.get('google_email') # Preserve the email on refresh
+                
+                # After refresh, the 'creds' object is updated in-place.
+                # Now, save these updated values back to the DB.
+                updated_creds_data = {
+                    "access_token": creds.token,
+                    "expiry": creds.expiry,
+                    # We don't need to pass the refresh token again, as it doesn't change
+                    # and our new CRUD function won't overwrite it with None.
+                    "scopes": creds.scopes
                 }
-                crud.save_google_credentials(db, user_id, updated_token_data)
-            except HttpError as e:
-                raise Exception("Failed to refresh Google credentials.") from e
+                crud.save_or_update_google_credentials(db, user_id, updated_creds_data)
+                print(f"DEBUG: Successfully refreshed and saved new token for user {user_id}.")
+
+            except RefreshError as e:
+                print(f"ERROR: Failed to refresh Google token for user {user_id}. The refresh token may be invalid. Error: {e}")
+                # Optional: Delete the bad credentials so the user is forced to re-authenticate.
+                # crud.delete_google_credentials_by_user_id(db, user_id)
+                raise Exception("Failed to refresh Google credentials. Please try linking your account again.") from e
         
         elif creds.expired and not creds.refresh_token:
-             raise Exception("Google credentials expired and cannot be refreshed.")
+             print(f"ERROR: Google credentials for user {user_id} expired and CANNOT be refreshed (no refresh token).")
+             raise Exception("Google credentials expired and cannot be refreshed. Please link your account again.")
 
         return build(service_name, version, credentials=creds)
     finally:
         db.close()
 
-async def exchange_code_for_token(auth_code: str, state: str) -> models.GoogleCredentials:
-    db = database.SessionLocal()
+async def exchange_code_for_token(auth_code: str, state: str, db: AsyncSession) -> models.GoogleCredentials:
+    """Exchanges auth code for tokens and saves them to the DB (REFACTORED)."""
     try:
-        db_oauth_state = crud.get_oauth_state_by_value(db, state_value=state)
+        db_oauth_state = await crud.get_oauth_state_by_value_async(db, state_value=state)
         if not db_oauth_state:
-            raise Exception("Invalid or missing OAuth state.")
-        
-        user_id_from_state = db_oauth_state.user_id
-        crud.delete_oauth_state(db, state_value=state)
+            raise Exception("Invalid or missing OAuth state. Please try logging in again.")
 
-        async with httpx.AsyncClient() as client:
-            token_response = await client.post(
-                "https://oauth2.googleapis.com/token",
-                data={
-                    "code": auth_code, "client_id": config.GOOGLE_CLIENT_ID,
-                    "client_secret": config.GOOGLE_CLIENT_SECRET, "redirect_uri": config.GOOGLE_REDIRECT_URI,
-                    "grant_type": "authorization_code"
+        user_id = db_oauth_state.user_id
+        await crud.delete_oauth_state_async(db, state_value=state)
+
+        flow = Flow.from_client_config(
+            client_config={
+                "web": {
+                    "client_id": config.GOOGLE_CLIENT_ID, "client_secret": config.GOOGLE_CLIENT_SECRET,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth", "token_uri": "https://oauth2.googleapis.com/token",
                 }
-            )
-            token_response.raise_for_status()
-            token_data_from_google = token_response.json()
-            
-            # --- THIS IS THE CORRECTED LOGIC ---
-            # 1. First, decode the id_token that Google sent us.
-            id_info = id_token.verify_oauth2_token(
-                token_data_from_google['id_token'], requests.Request(), config.GOOGLE_CLIENT_ID
-            )
-            # 2. Extract the user's verified Google email from the decoded token.
-            google_email = id_info.get('email')
-            if not google_email:
-                raise Exception("Could not retrieve email from Google ID token.")
-            print(f"INFO: Verified Google email '{google_email}' for user {user_id_from_state}.")
-            # --- END OF CORRECTION ---
-
-            expiry_dt = datetime.now(timezone.utc) + timedelta(seconds=token_data_from_google.get('expires_in', 3600))
-            
-            token_data_for_db = {
-                "access_token": token_data_from_google['access_token'],
-                "refresh_token": token_data_from_google.get('refresh_token'),
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "client_id": config.GOOGLE_CLIENT_ID,
-                "client_secret": config.GOOGLE_CLIENT_SECRET,
-                "scopes": token_data_from_google.get('scope', '').split(' '),
-                "expiry": expiry_dt,
-                "google_email": google_email # 3. Now we can safely use the variable here.
-            }
+            },
+            scopes=SCOPES, redirect_uri=config.GOOGLE_REDIRECT_URI
+        )
+        # This is where the code is exchanged for tokens
+        flow.fetch_token(code=auth_code)
         
-        db_creds = crud.save_google_credentials(db, user_id_from_state, token_data_for_db)
+        # flow.credentials now holds all the token information
+        creds = flow.credentials
+        
+        
+        # Verify the ID token to get the user's email securely
+        id_info = id_token.verify_oauth2_token(creds.id_token, requests.Request(), creds.client_id)
+        google_email = id_info.get('email')
+
+        # Check for the crucial refresh_token
+        has_refresh_token = creds.refresh_token is not None
+        print(f"DEBUG: Token exchange for user {user_id}. Refresh token received from Google: {has_refresh_token}")
+        if not has_refresh_token:
+            print("WARNING: No refresh token received. User may need to re-authenticate fully if access is revoked.")
+        print("creds.token ---->", creds.token)
+        # Prepare data for our new database schema
+        creds_data_for_db = {
+            "google_email": google_email,
+            "access_token": creds.token,
+            "refresh_token": creds.refresh_token,
+            "token_uri": creds.token_uri,
+            "client_id": creds.client_id,
+            "client_secret": creds.client_secret,
+            "scopes": creds.scopes,
+            "expiry": creds.expiry, # This is already a timezone-aware datetime
+        }
+        print("Saving creds_data_for_db:", creds_data_for_db)
+
+        db_creds = await crud.save_or_update_google_credentials_async(db, user_id, creds_data_for_db)
+        print(f"DEBUG: Successfully saved credentials to DB for user {user_id} with email {google_email}")
         return db_creds
+        
     except Exception as e:
         print(f"ERROR: Google token exchange failed: {e}")
+        # Re-raise the exception to be handled by the API endpoint
         raise
-    finally:
-        db.close()
 
 def get_google_auth_url(state: str) -> str:
-    # This function is unchanged
+    """Generates the Google Auth URL (REFACTORED to include prompt=consent)."""
     flow = Flow.from_client_config(
         client_config={
             "web": {
@@ -141,7 +146,12 @@ def get_google_auth_url(state: str) -> str:
         },
         scopes=SCOPES, redirect_uri=config.GOOGLE_REDIRECT_URI
     )
+    
+    # THE FIX: Add `prompt='consent'` to ensure a refresh token is always issued.
     authorization_url, _ = flow.authorization_url(
-        access_type='offline', include_granted_scopes='true', state=state
+        access_type='offline',
+        include_granted_scopes='true',
+        state=state,
+        prompt='consent' 
     )
     return authorization_url

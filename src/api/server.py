@@ -9,6 +9,7 @@ from .routers import calendar # <-- NEW IMPORT
 from .routers import gmail    # <-- NEW IMPORT
 from .routers import notifications
 from .routers import agent
+from fastapi.middleware.cors import CORSMiddleware
 # --- Main FastAPI Application Instance ---
 app = FastAPI(
     title="AIBuddies API",
@@ -16,10 +17,17 @@ app = FastAPI(
     version="1.0.0",
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all for testing. Use specific domains in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # --- Startup Event Handler ---
 @app.on_event("startup")
-def on_startup():
-    create_database_and_tables()
+async def on_startup(): # <-- Make async
+    await create_database_and_tables() 
 
 # --- Include Routers ---
 app.include_router(tasks.router)

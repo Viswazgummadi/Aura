@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 from src.database import crud, models
 from src.database.database import get_db
 from src.core import security
+from src.database.database import get_db, get_async_db
+from sqlalchemy.ext.asyncio import AsyncSession
 # from src.api.dependencies import get_current_user
 
 # Instantiate the OAuth2PasswordBearer for dependency injection
@@ -93,5 +95,35 @@ async def get_current_user_from_ws(
     user = crud.get_user_by_id(db, user_id=user_id)
     if user is None or not user.is_active:
         raise credentials_exception
+    
+    return user
+async def get_current_user_async(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_async_db) # <-- Uses the async DB
+) -> models.User:
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    
+    payload = security.decode_access_token(token)
+    if payload is None:
+        raise credentials_exception
+    
+    user_id: int = payload.get("user_id")
+    if user_id is None:
+        raise credentials_exception
+    
+    # Calls the new async crud function
+    user = await crud.get_user_by_id_async(db, user_id=user_id)
+    if user is None:
+        raise credentials_exception
+    
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Inactive user"
+        )
     
     return user

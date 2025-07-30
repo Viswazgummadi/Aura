@@ -3,14 +3,22 @@
 # FastAPI Core Imports
 from fastapi import (
     APIRouter, Depends, HTTPException, status, Query, WebSocket,
-    BackgroundTasks
+    BackgroundTasks,Request
 )
+from dateutil.parser import isoparse
+from src.api.dependencies import get_current_user, get_current_user_from_ws, get_current_user_async
+
+from src.database.database import get_db, get_async_db
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import RedirectResponse
 
 # Python Standard Library
 import json
 from datetime import timedelta, datetime, timezone 
+import asyncio
 
 # SQLAlchemy
 from sqlalchemy.orm import Session
@@ -71,79 +79,83 @@ def login_for_access_token(
 # --- Google OAuth Endpoints ---
 @router.get("/google/login", status_code=status.HTTP_302_FOUND, response_class=RedirectResponse)
 async def google_login(
-    current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    request:Request,
+    current_user: models.User = Depends(get_current_user_async), # <-- USE THE ASYNC DEPENDENCY
+    db: AsyncSession = Depends(get_async_db)
 ):
-    # ... (this function is correct, no changes needed)
     print(f"API: Initiating Google OAuth for AIBuddies user ID: {current_user.id}")
-    oauth_state_obj = crud.create_oauth_state(db, user_id=current_user.id)
+    print("Request Headers:")
+    for key, value in request.headers.items():
+        print(f"{key}: {value}")
+    oauth_state_obj = await crud.create_oauth_state_async(db, user_id=current_user.id)
     state_value_for_google = oauth_state_obj.state_value
-    
-    google_auth_url = gcp_auth.get_google_auth_url(state=state_value_for_google)
+    print(f"DEBUG: Created OAuth state in DB: '{state_value_for_google}'")
 
+    google_auth_url = gcp_auth.get_google_auth_url(state=state_value_for_google)
     print(f"API: Redirecting user {current_user.id} to Google for authorization.")
     return RedirectResponse(google_auth_url)
+
 
 
 @router.get("/google/callback")
 async def google_callback(
     code: str = Query(..., description="Authorization code from Google"),
     state: str = Query(..., description="State parameter for CSRF protection"),
-    scope: str = Query(..., description="Scopes granted by the user (space-separated)"),
-    db: Session = Depends(get_db)
+    # 'scope' is no longer needed here as the flow object handles it
+    db: AsyncSession = Depends(get_async_db) 
 ):
-    # ... (this function is correct, no changes needed)
-    print(f"API: Google OAuth callback received. State: {state}, Code: {code}")
-
     try:
-        await gcp_auth.exchange_code_for_token(auth_code=code, state=state)
+        print(f"API: Received Google callback with state: {state}")
+        # The refactored function is much cleaner to call
         
-        print(f"API: Google tokens successfully exchanged and saved.")
+        await gcp_auth.exchange_code_for_token(auth_code=code, state=state, db=db)
+        
+        # Redirecting to a success page (your frontend can handle this)
         return RedirectResponse(url="/docs?message=Google_Auth_Success", status_code=status.HTTP_303_SEE_OTHER)
-
     except Exception as e:
-        print(f"API ERROR: Google token exchange failed: {e}")
+        # Log the full error server-side for debugging
+        print(f"API ERROR: Complete failure in Google callback flow. Error: {e}")
+        # Provide a user-friendly error message
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to exchange Google authorization code: {e}"
+            status_code=status.HTTP_400_BAD_REQUEST, # Use 400 for a bad request from user/google
+            detail=f"Authentication failed. Could not process Google authorization. Please try again. Server error: {str(e)}"
         )
-
-
 # --- Google Credential Status Endpoint ---
 @router.get("/google/status")
 async def google_status(
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(get_current_user_async), 
     db: Session = Depends(get_db)
 ):
     # ... (this function is correct, no changes needed)
     print(f"API: Checking Google status for user ID: {current_user.id}")
     db_creds = crud.get_google_credentials_by_user_id(db, current_user.id)
+    print("db_creds: ", db_creds.token)
     
     if not db_creds:
         return {"status": "not_connected", "detail": "Google account not linked."}
     
     try:
-        token_data_from_db = json.loads(db_creds.token)
-        expiry_str = token_data_from_db.get('expiry')
+        token_data_from_db = db_creds.access_token
+        print("token_data_from_db:", token_data_from_db)
+        
         is_token_valid = False
         expiry_info = "N/A"
         now_utc = datetime.now(timezone.utc)
 
-        if expiry_str:
-            if expiry_str.endswith("Z"):
-                expiry_str = expiry_str.replace("Z", "+00:00")
-            
-            try:
-                creds_expiry_dt = datetime.fromisoformat(expiry_str)
-            except ValueError:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Invalid expiry datetime format: {expiry_str}"
-                )
-            
+        if isinstance(db_creds.expiry, datetime):
+            creds_expiry_dt = db_creds.expiry
+        # Make sure both are timezone-aware for comparison
+            if creds_expiry_dt.tzinfo is None:
+                creds_expiry_dt = creds_expiry_dt.replace(tzinfo=timezone.utc)
+
             is_token_valid = creds_expiry_dt > now_utc
             expiry_info = creds_expiry_dt.isoformat()
-        
+        else:
+            raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"Invalid expiry type: {type(db_creds.expiry)}"
+    )
+
         return {
             "status": "connected",
             "detail": "Google account linked and credentials are valid.",

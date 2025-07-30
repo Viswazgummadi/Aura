@@ -105,3 +105,32 @@ def get_notes_by_tag(user_id: int, tag_name: str) -> List[Dict]:
         return [models.NoteResponse.from_orm(note).model_dump() for note in notes]
     finally:
         db.close()
+@tool
+def link_task_to_note(user_id: int, note_id: int, task_id: str) -> Dict:
+    """
+    Links an existing task to a note. Use this to associate an action item with a piece of reference material.
+    You must provide both the note_id and the task_id.
+    """
+    db = database.SessionLocal()
+    try:
+        updated_note = crud.link_note_to_task(db, note_id=note_id, task_id=task_id, user_id=user_id)
+        if not updated_note:
+            return {"error": "Note or Task not found, or they do not both belong to the user."}
+        return models.NoteResponse.from_orm(updated_note).model_dump()
+    finally:
+        db.close()
+
+@tool
+def unlink_task_from_note(user_id: int, note_id: int, task_id: str) -> Dict:
+    """
+    Removes the link between a task and a note. The note and task themselves are not deleted.
+    You must provide both the note_id and the task_id.
+    """
+    db = database.SessionLocal()
+    try:
+        updated_note = crud.unlink_note_from_task(db, note_id=note_id, task_id=task_id, user_id=user_id)
+        if not updated_note:
+            return {"error": "Note or Task not found, or the link does not exist."}
+        return models.NoteResponse.from_orm(updated_note).model_dump()
+    finally:
+        db.close()
