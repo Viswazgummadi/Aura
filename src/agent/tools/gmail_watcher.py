@@ -25,7 +25,9 @@ def watch_gmail_inbox(user_id: int) -> dict:
 
         # Check if a watch is active and not expiring in the next day
         if creds.watch_expiry_timestamp:
-            now = datetime.datetime.now(datetime.timezone.utc)
+            # now = datetime.datetime.now(datetime.timezone.utc)
+            now = datetime.datetime.utcnow()
+
             if creds.watch_expiry_timestamp > (now + datetime.timedelta(days=1)):
                 print(f"INFO: Watch is already active for user {user_id}. Expires at {creds.watch_expiry_timestamp}.")
                 return {"status": "already_active", "expiry": creds.watch_expiry_timestamp.isoformat()}
