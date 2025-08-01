@@ -89,3 +89,4 @@ def delete_calendar_event(user_id: int, event_id: str) -> Dict:
     except Exception as e:
         # <-- CHANGED: Return a structured error dictionary.
         return {"error": f"An unexpected error occurred: {e}"}
+    

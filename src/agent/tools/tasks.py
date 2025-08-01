@@ -63,7 +63,24 @@ def get_all_tasks(user_id: int, status: Optional[str] = None, priority: Optional
         return [models.TaskResponse.from_orm(task).model_dump() for task in tasks]
     finally:
         db.close()
-
+@tool
+def get_task_by_id(user_id: int, task_id: str) -> Optional[Dict]:
+    """
+    Retrieves a single, specific task by its unique ID.
+    Use this to get the full details of a task, including its sub-tasks and linked notes.
+    Returns the task data as a dictionary if found, otherwise returns None.
+    """
+    db = database.SessionLocal()
+    try:
+        # The CRUD function already handles the database query and user ownership check
+        task = crud.get_task_by_id(db, task_id=task_id, user_id=user_id)
+        if task:
+            # Convert the SQLAlchemy object to a Pydantic model, then to a dictionary
+            return models.TaskResponse.from_orm(task).model_dump()
+        # If the task is not found, the crud function returns None, which we will also return
+        return None
+    finally:
+        db.close()
 @tool
 def update_task(user_id: int, task_id: str, description: Optional[str] = None, status: Optional[str] = None, priority: Optional[str] = None, due_date: Optional[str] = None) -> Dict:
     """

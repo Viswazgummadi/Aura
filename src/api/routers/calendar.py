@@ -87,3 +87,20 @@ def update_event(event_id: str, event_data: CalendarEventUpdate, current_user: U
         location=updated_event_from_tool.get('location'),
         html_link=updated_event_from_tool.get('htmlLink')
     )
+@router.delete("/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_calendar_event(event_id: str, current_user: User = Depends(get_current_user)):
+    """
+    Deletes a specific event from the user's calendar.
+    """
+    result = calendar_tools.delete_calendar_event.invoke({
+        "user_id": current_user.id,
+        "event_id": event_id
+    })
+
+    if "error" in result:
+        if "not found" in result["error"].lower():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=result["error"])
+        else:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=result["error"])
+    
+    return # On success, return a 204 No Content response

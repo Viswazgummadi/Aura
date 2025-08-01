@@ -84,3 +84,18 @@ def delete_a_task(task_id: str, current_user: User = Depends(get_current_user)):
     if "error" in result:
         raise HTTPException(status_code=404, detail=result)
     return
+@router.get("/{task_id}", response_model=TaskResponse)
+def get_single_task(task_id: str, current_user: User = Depends(get_current_user)):
+    """
+    Get a single task by its unique ID.
+    This endpoint will return the task along with its nested sub-tasks and linked notes.
+    """
+    tool_input = {"user_id": current_user.id, "task_id": task_id}
+    
+    # We need a tool to fetch a single task. Let's assume it's called `get_task_by_id`.
+    task = tasks_tools.get_task_by_id.invoke(tool_input)
+
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    return task

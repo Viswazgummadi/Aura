@@ -52,7 +52,7 @@ async def gmail_push_notification(
         background_tasks.add_task(
             processing.process_new_email_notification,
             email=email,
-            start_history_id=history_id
+            new_history_id=history_id
         )
 
     except Exception as e:

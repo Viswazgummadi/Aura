@@ -8,13 +8,13 @@ from src.agent.tools import notes as notes_tools
 router = APIRouter(prefix="/notes", tags=["Notes"])
 router_tags = APIRouter(prefix="/tags", tags=["Tags"])
 
-@router.post("", response_model=NoteResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=NoteResponse, status_code=status.HTTP_201_CREATED)
 def create_new_note(note: NoteCreate, current_user: User = Depends(get_current_user)):
     return notes_tools.create_note.invoke({
         "user_id": current_user.id, "title": note.title, "content": note.content
     })
 
-@router.get("", response_model=list[NoteResponse])
+@router.get("/", response_model=list[NoteResponse])
 def list_all_user_notes(current_user: User = Depends(get_current_user)):
     return notes_tools.get_all_notes.invoke({"user_id": current_user.id})
 
@@ -39,7 +39,7 @@ def delete_a_note(note_id: int, current_user: User = Depends(get_current_user)):
     if "error" in result:
         raise HTTPException(status_code=404, detail=result)
     return
-@router.post("/{note_id}/tasks/{task_id}", response_model=NoteResponse)
+@router.post("/{note_id}/link-task/{task_id}", response_model=NoteResponse)
 def link_task_to_a_note(note_id: int, task_id: str, current_user: User = Depends(get_current_user)):
     """Links a task to a note."""
     result = notes_tools.link_task_to_note.invoke({
@@ -51,7 +51,7 @@ def link_task_to_a_note(note_id: int, task_id: str, current_user: User = Depends
         raise HTTPException(status_code=404, detail=result["error"])
     return result
 
-@router.delete("/{note_id}/tasks/{task_id}", response_model=NoteResponse)
+@router.delete("/{note_id}/unlink-task/{task_id}", response_model=NoteResponse)
 def unlink_task_from_a_note(note_id: int, task_id: str, current_user: User = Depends(get_current_user)):
     """Unlinks a task from a note."""
     result = notes_tools.unlink_task_from_note.invoke({
