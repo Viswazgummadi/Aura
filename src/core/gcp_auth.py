@@ -10,6 +10,7 @@ from google.oauth2 import id_token
 from google.auth.transport import requests
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
+from google.auth.exceptions import RefreshError
 
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2.credentials import Credentials
@@ -31,9 +32,15 @@ def build_google_service(service_name: str, version: str, user_id: int):
     db = database.SessionLocal()
     try:
         db_creds = crud.get_google_credentials_by_user_id(db, user_id)
+        print(db_creds.expiry,type(db_creds.expiry))
+        print(repr(db_creds.expiry))         # e.g. datetime.datetime(2025, 7, 30, 17, 29, 5, tzinfo=datetime.timezone.utc)
+        print(db_creds.expiry.tzinfo)        # Should NOT be None
+        expiry = db_creds.expiry
+        expiry_naive = db_creds.expiry.astimezone(timezone.utc).replace(tzinfo=None)
+
         if not db_creds:
             raise Exception(f"No Google credentials for user {user_id}. Please link your Google account.")
-
+        
         # Build Credentials object directly from the DB columns
         creds = Credentials(
             token=db_creds.access_token,
@@ -42,19 +49,24 @@ def build_google_service(service_name: str, version: str, user_id: int):
             client_id=db_creds.client_id,
             client_secret=db_creds.client_secret,
             scopes=db_creds.scopes.split(' '),
-            expiry=db_creds.expiry # Already a timezone-aware datetime from DB
+            expiry=expiry_naive
         )
-
+        
+        print("creds.expiry: ", creds.expiry, type(creds.expiry))
+        
         if creds.expired and creds.refresh_token:
             print(f"DEBUG: Google creds for user {user_id} expired. Refreshing...")
             try:
                 creds.refresh(GoogleAuthRequest())
-                
+                expiry_aware = creds.expiry
+                if expiry_aware.tzinfo is None:
+                    expiry_aware = expiry_aware.replace(tzinfo=timezone.utc)
+
                 # After refresh, the 'creds' object is updated in-place.
                 # Now, save these updated values back to the DB.
                 updated_creds_data = {
                     "access_token": creds.token,
-                    "expiry": creds.expiry,
+                    "expiry": expiry_aware,
                     # We don't need to pass the refresh token again, as it doesn't change
                     # and our new CRUD function won't overwrite it with None.
                     "scopes": creds.scopes
@@ -112,6 +124,7 @@ async def exchange_code_for_token(auth_code: str, state: str, db: AsyncSession) 
         if not has_refresh_token:
             print("WARNING: No refresh token received. User may need to re-authenticate fully if access is revoked.")
         print("creds.token ---->", creds.token)
+        print("creds.expiry ---->", creds.expiry)
         # Prepare data for our new database schema
         creds_data_for_db = {
             "google_email": google_email,

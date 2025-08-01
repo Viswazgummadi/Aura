@@ -92,6 +92,7 @@ async def google_login(
     print(f"DEBUG: Created OAuth state in DB: '{state_value_for_google}'")
 
     google_auth_url = gcp_auth.get_google_auth_url(state=state_value_for_google)
+    print("google_auth_url:",google_auth_url)
     print(f"API: Redirecting user {current_user.id} to Google for authorization.")
     return RedirectResponse(google_auth_url)
 
@@ -147,7 +148,9 @@ async def google_status(
         # Make sure both are timezone-aware for comparison
             if creds_expiry_dt.tzinfo is None:
                 creds_expiry_dt = creds_expiry_dt.replace(tzinfo=timezone.utc)
-
+            print("current time:",now_utc,type(now_utc))
+            print("expiry time:",creds_expiry_dt,type(creds_expiry_dt))
+            # Check if the token is still valid
             is_token_valid = creds_expiry_dt > now_utc
             expiry_info = creds_expiry_dt.isoformat()
         else:

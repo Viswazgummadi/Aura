@@ -20,11 +20,13 @@ def list_unread_emails(user_id: int, max_results: int = 10) -> Union[List[Dict],
     Use this to get a quick summary of new emails. Returns a list of dictionaries.
     """
     try:
+        print("started just now")
         service = build_google_service('gmail', 'v1', user_id=user_id)
+        print("reached here")
         results = service.users().messages().list(
             userId='me', labelIds=['INBOX', 'UNREAD'], maxResults=max_results
         ).execute()
-        
+        print("still here")
         messages = results.get('messages', [])
         email_data = []
         if not messages:

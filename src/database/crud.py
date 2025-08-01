@@ -548,6 +548,7 @@ async def get_user_by_id_async(db: AsyncSession, user_id: int) -> models.User | 
 def save_or_update_google_credentials(db: Session, user_id: int, creds_data: dict) -> models.GoogleCredentials:
     """Saves or updates Google credentials using specific columns for a single source of truth."""
     db_creds = get_google_credentials_by_user_id(db, user_id)
+    print(creds_data)  # Debugging line to see the creds_data structure
     
     # Ensure scopes are a space-separated string
     scopes_str = ' '.join(creds_data.get('scopes', [])) if isinstance(creds_data.get('scopes'), list) else creds_data.get('scopes', '')
@@ -555,7 +556,6 @@ def save_or_update_google_credentials(db: Session, user_id: int, creds_data: dic
     if db_creds:
         # Update existing credentials
         print(f"DEBUG (CRUD-Sync): Updating creds for user {user_id}. Has new refresh_token: {creds_data.get('refresh_token') is not None}")
-        db_creds.token=creds_data['token']
         db_creds.access_token = creds_data['access_token']
         print(f"access_token here in ===== save or update google: {db_creds.access_token}")
         # IMPORTANT: Only update refresh_token if a new one is provided.

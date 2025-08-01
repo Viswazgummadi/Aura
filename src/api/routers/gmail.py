@@ -20,6 +20,7 @@ def get_unread_emails(current_user: User = Depends(get_current_user), max_result
     emails = gmail_tools.list_unread_emails.invoke({
         "user_id": current_user.id, "max_results": max_results
     })
+    print("emails:", emails)  # Debugging line to check the output
     # Check if the tool returned an error
     if isinstance(emails, list) and emails and "error" in emails[0]:
         raise HTTPException(status_code=500, detail=emails[0]["error"])
