@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 
-from src.database.models import CalendarEventCreate, CalendarEventResponse, User, CalendarEventUpdate
+from src.database.models import CalendarEventCreate, CalendarEventDeleteResponse,CalendarEventResponse, User, CalendarEventUpdate
 from src.api.dependencies import get_current_user
 from src.agent.tools import calendar as calendar_tools
 
@@ -38,6 +38,22 @@ def get_upcoming_events(current_user: User = Depends(get_current_user), max_resu
         )
     return response_events
 
+@router.delete("/events/delete", response_model=CalendarEventDeleteResponse, status_code=status.HTTP_201_CREATED)
+def delete_calendar_event(event_id: str, current_user: User = Depends(get_current_user)):
+    event_from_tool = calendar_tools.delete_calendar_event.invoke({
+        "user_id": current_user.id, "event_id": event_id
+    })
+    if "error" in event_from_tool:
+        raise HTTPException(status_code=500, detail=event_from_tool["error"])
+    return CalendarEventDeleteResponse(
+    status=event_from_tool["status"],
+    message=event_from_tool["message"]
+)
+
+
+    
+    
+    
 @router.post("/events", response_model=CalendarEventResponse, status_code=status.HTTP_201_CREATED)
 def create_calendar_event(event_data: CalendarEventCreate, current_user: User = Depends(get_current_user)):
     event_from_tool = calendar_tools.create_calendar_event.invoke({

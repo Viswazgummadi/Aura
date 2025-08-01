@@ -335,6 +335,9 @@ class CalendarEventResponse(CalendarEventBase):
     id: str # Google Calendar event ID
     html_link: Optional[str] = None # Link to the event on Google Calendar
 
+class CalendarEventDeleteResponse(BaseModel):
+    status: str
+    message: Optional[str] = None
     class Config:
         extra = 'allow' # Allow extra fields from Google API response, if not explicitly defined here
 

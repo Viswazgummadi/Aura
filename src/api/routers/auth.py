@@ -83,10 +83,7 @@ async def google_login(
     current_user: models.User = Depends(get_current_user_async), # <-- USE THE ASYNC DEPENDENCY
     db: AsyncSession = Depends(get_async_db)
 ):
-    print(f"API: Initiating Google OAuth for AIBuddies user ID: {current_user.id}")
-    print("Request Headers:")
-    for key, value in request.headers.items():
-        print(f"{key}: {value}")
+   
     oauth_state_obj = await crud.create_oauth_state_async(db, user_id=current_user.id)
     state_value_for_google = oauth_state_obj.state_value
     print(f"DEBUG: Created OAuth state in DB: '{state_value_for_google}'")
