@@ -5,45 +5,46 @@ from src.database.models import TaskCreate, TaskResponse, TaskUpdate, User
 from src.api.dependencies import get_current_user
 from src.agent.tools import tasks as tasks_tools
 from typing import Optional, List
-
+from sqlalchemy.orm import Session
+from src.database import crud, database
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
 @router.post("", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
-def create_new_task(task: TaskCreate, current_user: User = Depends(get_current_user)):
-    # --- THIS IS THE FIX ---
-    
-    # 1. Let Pydantic convert the incoming request data into a dictionary.
-    #    This will now automatically include `status` if it was provided.
-    tool_input = task.model_dump(exclude_unset=True)
-    
-    # 2. Add the user_id, which is not part of the request body.
-    tool_input['user_id'] = current_user.id
-
-    # 3. Handle the due_date format conversion if it exists.
-    if 'due_date' in tool_input and tool_input['due_date']:
-        tool_input['due_date'] = tool_input['due_date'].isoformat().replace('+00:00', 'Z')
-
-    # 4. Invoke the tool with the complete dictionary.
-    return tasks_tools.create_task.invoke(tool_input)
+def create_new_task(
+    task: TaskCreate, 
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(database.get_db) # <-- Add the DB dependency
+):
+    """
+    Creates a new task directly via the API.
+    This endpoint communicates directly with the database layer.
+    """
+    # The 'task' variable is a Pydantic model (TaskCreate) from the request body.
+    # The 'current_user' is our authenticated user object.
+    # We pass both directly to the CRUD function.
+    db_task = crud.create_task(db=db, task=task, user_id=current_user.id)
+    return db_task
 
 @router.get("", response_model=list[TaskResponse])
 def get_all_user_tasks(
-    current_user: User = Depends(get_current_user),
     status: Optional[str] = Query(None, description="Filter tasks by status (e.g., 'pending', 'completed')"),
-    priority: Optional[str] = Query(None, description="Filter tasks by priority (e.g., 'high', 'medium', 'low')")
+    priority: Optional[str] = Query(None, description="Filter tasks by priority (e.g., 'high', 'medium', 'low')"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(database.get_db) # <-- Add the DB dependency
 ):
     """
     Get a list of all tasks for the current user.
     You can optionally filter the tasks by their status or priority.
     """
-    # We pass the query parameters directly to the tool's invoke method.
-    tool_input = {"user_id": current_user.id}
-    if status:
-        tool_input["status"] = status
-    if priority:
-        tool_input["priority"] = priority
-        
-    return tasks_tools.get_all_tasks.invoke(tool_input)
+    # Call the CRUD function directly. This is much cleaner and more correct.
+    tasks = crud.get_all_tasks(
+        db=db, 
+        user_id=current_user.id, 
+        status=status, 
+        priority=priority
+    )
+    return tasks
+
 @router.post("/batch", response_model=List[TaskResponse], status_code=status.HTTP_201_CREATED)
 def create_new_tasks_batch(tasks: List[TaskCreate], current_user: User = Depends(get_current_user)):
     """

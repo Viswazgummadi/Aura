@@ -329,60 +329,110 @@ def get_or_create_provider(db: Session, provider_name: str) -> models.LLMProvide
         db.refresh(provider)
     return provider
 
-def get_provider_by_name(db: Session, provider_name: str) -> models.LLMProvider | None:
+def get_provider_by_name(db: Session, provider_name: str) -> Optional[models.LLMProvider]:
     return db.query(models.LLMProvider).filter(models.LLMProvider.name == provider_name.lower()).first()
 
-# --- API Key Functions ---
-def add_api_key(db: Session, provider_name: str, key: str) -> models.APIKey:
+# --- NEW: User-Specific API Key Functions ---
+def add_user_api_key(db: Session, user_id: int, provider_name: str, key: str, nickname: Optional[str] = None) -> models.APIKey:
+    """Adds a new API key for a specific user and provider."""
     provider = get_or_create_provider(db, provider_name)
-    db_key = models.APIKey(key=key, provider_id=provider.id)
+    db_key = models.APIKey(
+        key=key, 
+        nickname=nickname,
+        provider_id=provider.id,
+        user_id=user_id
+    )
     db.add(db_key)
     db.commit()
     db.refresh(db_key)
     return db_key
 
-def get_next_api_key(db: Session, provider_name: str) -> models.APIKey | None:
+def get_user_api_key_for_provider(db: Session, user_id: int, provider_name: str) -> Optional[models.APIKey]:
     """
-    This is the core logic for key rotation. It fetches the least recently used,
-    active key for a given provider, and updates its last_used timestamp.
-    This ensures we cycle through keys, distributing the load.
+    Gets the active API key for a specific user and provider.
+    For simplicity, this version gets the first active key it finds.
+    A more advanced version could rotate between multiple keys for the same user.
     """
     provider = get_provider_by_name(db, provider_name)
     if not provider:
         return None
         
-    # Find the active key that was used the longest time ago
     db_key = (
         db.query(models.APIKey)
-        .filter(models.APIKey.provider_id == provider.id, models.APIKey.is_active == True)
-        .order_by(models.APIKey.last_used.asc())
+        .filter(
+            models.APIKey.user_id == user_id,
+            models.APIKey.provider_id == provider.id, 
+            models.APIKey.is_active == True
+        )
         .first()
     )
     
+    # Update the last_used timestamp if a key is found and used
     if db_key:
-        # Update its timestamp to now, so it goes to the back of the line
         db_key.last_used = datetime.datetime.now(datetime.timezone.utc)
         db.commit()
         db.refresh(db_key)
         
     return db_key
 
-def deactivate_api_key(db: Session, key_id: int) -> models.APIKey | None:
-    db_key = db.query(models.APIKey).filter(models.APIKey.id == key_id).first()
-    if db_key:
-        db_key.is_active = False
-        db.commit()
-        db.refresh(db_key)
-    return db_key
+def list_user_api_keys(db: Session, user_id: int) -> List[models.APIKey]:
+    """Lists all API keys belonging to a specific user."""
+    return db.query(models.APIKey).filter(models.APIKey.user_id == user_id).all()
 
-# --- LLM Model Functions ---
+def delete_user_api_key(db: Session, user_id: int, key_id: int) -> bool:
+    """Deletes an API key, ensuring it belongs to the user."""
+    db_key = db.query(models.APIKey).filter(models.APIKey.id == key_id, models.APIKey.user_id == user_id).first()
+    if db_key:
+        db.delete(db_key)
+        db.commit()
+        return True
+    return False
+def set_user_active_model(db: Session, user_id: int, model_name: str) -> Optional[models.UserModelPreference]:
+    """Sets the active model preference for a specific user."""
+    # Find the global model entry to get its ID
+    model = db.query(models.LLMModel).filter(models.LLMModel.name == model_name).first()
+    if not model:
+        return None # The requested model doesn't exist in our system
+
+    # Check if the user already has a preference
+    preference = db.query(models.UserModelPreference).filter(models.UserModelPreference.user_id == user_id).first()
+    
+    if preference:
+        # Update existing preference
+        preference.model_id = model.id
+    else:
+        # Create new preference
+        preference = models.UserModelPreference(user_id=user_id, model_id=model.id)
+        db.add(preference)
+        
+    db.commit()
+    db.refresh(preference)
+    return preference
+
+def get_user_active_model(db: Session, user_id: int) -> Optional[models.LLMModel]:
+    """Gets the active LLM model for a specific user based on their preference."""
+    preference = db.query(models.UserModelPreference).filter(models.UserModelPreference.user_id == user_id).first()
+    if preference:
+        # The relationship on the preference object will automatically load the model
+        return preference.model
+    
+    # --- Fallback Logic ---
+    # If a user hasn't set a preference, you could optionally return a system-wide default.
+    # For now, we'll return None to force the user to set a preference.
+    return None
+# --- Global Model Functions (for admins to add available models) ---
 def add_llm_model(db: Session, provider_name: str, model_name: str) -> models.LLMModel:
+    """(Admin) Adds a new, globally available LLM model."""
     provider = get_or_create_provider(db, provider_name)
     db_model = models.LLMModel(name=model_name, provider_id=provider.id)
     db.add(db_model)
     db.commit()
     db.refresh(db_model)
     return db_model
+
+def list_llm_models(db: Session) -> List[models.LLMModel]:
+    """(Admin) Lists all globally available LLM models."""
+    return db.query(models.LLMModel).all()
 
 def set_active_llm_model(db: Session, model_name: str) -> models.LLMModel | None:
     """
@@ -624,7 +674,16 @@ async def save_or_update_google_credentials_async(db: AsyncSession, user_id: int
             expiry=creds_data['expiry']
         )
         db.add(db_creds)
-        
+
     await db.commit()
     await db.refresh(db_creds)
     return db_creds
+
+def set_user_admin_status(db: Session, user_id: int, is_admin: bool) -> models.User | None:
+    """Sets the is_admin flag for a specific user."""
+    db_user = get_user_by_id(db, user_id=user_id)
+    if db_user:
+        db_user.is_admin = is_admin
+        db.commit()
+        db.refresh(db_user)
+    return db_user

@@ -43,29 +43,42 @@ class Tag(Base):
     def __repr__(self):
         return f"<Tag(id={self.id}, name='{self.name}')>"
     
+
+
+class LLMModel(Base):
+    __tablename__ = "llm_models"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, unique=True, index=True, nullable=False)
+    is_active = Column(Boolean, default=False, nullable=False)
+    provider_id = Column(Integer, ForeignKey("llm_providers.id"))
+    provider = relationship("LLMProvider", back_populates="models")
+    user_preferences = relationship("UserModelPreference", back_populates="model")
 class LLMProvider(Base):
     __tablename__ = "llm_providers"
     id = Column(Integer, primary_key=True)
     name = Column(String, unique=True, index=True, nullable=False) # e.g., "google", "openai"
     api_keys = relationship("APIKey", back_populates="provider")
     models = relationship("LLMModel", back_populates="provider")
-
-class LLMModel(Base):
-    __tablename__ = "llm_models"
-    id = Column(Integer, primary_key=True)
-    name = Column(String, unique=True, index=True, nullable=False) # e.g., "gemini-1.5-flash", "gpt-4o"
-    is_active = Column(Boolean, default=False, index=True) # Only one model should be active at a time
-    provider_id = Column(Integer, ForeignKey("llm_providers.id"))
-    provider = relationship("LLMProvider", back_populates="models")
-
 class APIKey(Base):
     __tablename__ = "api_keys"
     id = Column(Integer, primary_key=True)
-    key = Column(String, unique=True, nullable=False) # The actual API key
+    key = Column(String, nullable=False) 
+    nickname = Column(String, nullable=True) 
     is_active = Column(Boolean, default=True)
-    last_used = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc))
+    last_used = Column(DateTime, default=lambda: datetime.datetime.now(datetime.timezone.utc))
     provider_id = Column(Integer, ForeignKey("llm_providers.id"))
     provider = relationship("LLMProvider", back_populates="api_keys")
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    owner = relationship("User", back_populates="api_keys")
+
+class UserModelPreference(Base):
+    __tablename__ = "user_model_preferences"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False) # Each user has one preference
+    model_id = Column(Integer, ForeignKey("llm_models.id"), nullable=False)
+    
+    user = relationship("User", back_populates="model_preference")
+    model = relationship("LLMModel", back_populates="user_preferences")
 
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
@@ -86,10 +99,13 @@ class User(Base):
     notes = relationship("Note", back_populates="owner")
     google_credentials = relationship("GoogleCredentials", back_populates="user", uselist=False)
     oauth_states = relationship("OAuthState", back_populates="user")
+    # --- NEW: Relationships for user-specific model configuration ---
+    api_keys = relationship("APIKey", back_populates="owner")
+    model_preference = relationship("UserModelPreference", back_populates="user", uselist=False)
 
     def __repr__(self):
         return f"<User(id={self.id}, email='{self.email}')>"
-
+    
 class GoogleCredentials(Base):
     __tablename__ = "google_credentials"
     id = Column(Integer, primary_key=True, index=True)
@@ -223,15 +239,19 @@ class TaskResponse(TaskBase):
 
 class APIKeyBase(BaseModel):
     key: str
+    # --- NEW: nickname is part of the creation schema ---
+    nickname: Optional[str] = None
 
 class APIKeyCreate(APIKeyBase):
-    pass
+    provider_name: str # User must specify provider when creating
 
 class APIKeyResponse(APIKeyBase):
     id: int
+    nickname: Optional[str]
     is_active: bool
     last_used: datetime.datetime
     provider_id: int
+    user_id: int # --- NEW: Include user_id in the response
     
     class Config:
         from_attributes = True
@@ -244,12 +264,17 @@ class LLMModelCreate(LLMModelBase):
 
 class LLMModelResponse(LLMModelBase):
     id: int
-    is_active: bool
     provider_id: int
     
     class Config:
         from_attributes = True
+class UserModelPreferenceResponse(BaseModel):
+    user_id: int
+    model: LLMModelResponse
 
+    class Config:
+        from_attributes = True
+        
 class LLMProviderBase(BaseModel):
     name: str
 

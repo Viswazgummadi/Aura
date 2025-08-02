@@ -7,7 +7,7 @@ from langchain.schema import BaseMessage, messages_from_dict, messages_to_dict
 from langchain_community.vectorstores import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 import json
-from src.core.model_manager import model_manager
+from src.core.model_manager import llm_manager
 from src.database import crud, database
 
 # --- Configuration ---
@@ -20,34 +20,34 @@ class MemoryManager:
         Initializes the MemoryManager without loading heavy components.
         Components will be lazy-loaded on their first use.
         """
-        self._embedding_model = None
+        self._embedding_model_cache: dict[int, GoogleGenerativeAIEmbeddings] = {}
         self._chroma_client = None
 
-    def _initialize_components(self):
+    def _initialize_user_components(self, user_id: int):
         """
-        A private method to initialize components on first use.
-        This now explicitly uses Google's dedicated embedding model.
+        A private method to initialize components for a specific user on first use.
+        It now fetches the user's specific API key.
         """
-        if self._embedding_model is None:
-            # We use a dedicated, high-performance model for creating embeddings.
-            # This is a best practice and avoids errors with generation-only models.
-            # It still benefits from our resilient key management system.
+        # Check if we've already created an embedding model for this user.
+        if user_id not in self._embedding_model_cache:
             db = database.SessionLocal()
             try:
-                # Get any valid, active Google API key using our existing CRUD function.
-                api_key_obj = crud.get_next_api_key(db, "google")
+                # Get THIS user's API key for Google.
+                api_key_obj = crud.get_user_api_key_for_provider(db, user_id=user_id, provider_name="google")
                 if not api_key_obj:
-                    raise Exception("Cannot initialize memory: No active Google API key found.")
+                    raise Exception(f"Cannot initialize memory for user {user_id}: No active Google API key found.")
                 
-                # Explicitly use the recommended model for embeddings.
-                self._embedding_model = GoogleGenerativeAIEmbeddings(
+                embedding_model = GoogleGenerativeAIEmbeddings(
                     model="models/embedding-001",
                     google_api_key=api_key_obj.key
                 )
-                print(f"INFO: Initialized embedding model 'models/embedding-001' using API key ID {api_key_obj.id}")
+                # Cache the model instance for this user.
+                self._embedding_model_cache[user_id] = embedding_model
+                print(f"INFO: [User {user_id}] Initialized embedding model using their API key ID {api_key_obj.id}")
             finally:
                 db.close()
         
+        # Chroma client is global and can be initialized once.
         if self._chroma_client is None:
             self._chroma_client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIRECTORY)
 
@@ -55,14 +55,15 @@ class MemoryManager:
         """
         Retrieves or creates a user-specific collection in ChromaDB.
         """
-        # Ensure components are initialized before trying to use them.
-        self._initialize_components()
+        # Ensure components for this user are initialized.
+        self._initialize_user_components(user_id)
         
         collection_name = f"user_{user_id}_semantic_memory"
         return Chroma(
             client=self._chroma_client,
             collection_name=collection_name,
-            embedding_function=self._embedding_model,
+            # Use the cached embedding model for this specific user.
+            embedding_function=self._embedding_model_cache[user_id],
         )
 
     # --- Public Methods for the Agent ---
@@ -75,14 +76,18 @@ class MemoryManager:
         try:
             db_messages = crud.get_chat_history(db, session_id=session_id, user_id=user_id)
             
-            # --- THIS IS THE FIX ---
-            # 1. Parse the JSON string from the DB back into a dictionary
-            # 2. Then convert the dictionary into a LangChain message object
-            dict_messages = [messages_from_dict([json.loads(message.message)]) for message in db_messages]
-            
-            # Flatten the list of lists into a single list
-            flat_messages = [item for sublist in dict_messages for item in sublist]
-            return ChatMessageHistory(messages=flat_messages)
+            # --- IMPROVED VERSION ---
+            # This is a more direct and readable way to achieve the same result.
+            langchain_messages = []
+            for msg in db_messages:
+                # The 'message' field in the DB is a JSON string of a single-item list.
+                # 1. Load the string into a Python list of dicts.
+                # 2. Get the first (and only) item from that list.
+                message_dict = json.loads(msg.message)
+                # 3. Convert that single dictionary into a LangChain message object.
+                langchain_messages.extend(messages_from_dict([message_dict]))
+                
+            return ChatMessageHistory(messages=langchain_messages)
         finally:
             db.close()
 

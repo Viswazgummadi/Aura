@@ -10,6 +10,9 @@ from .routers import gmail    # <-- NEW IMPORT
 from .routers import notifications
 from .routers import agent
 from fastapi.middleware.cors import CORSMiddleware
+from src.agent.memory.manager import memory_manager
+from src.agent.tools import all_tools
+from .routers import settings
 # --- Main FastAPI Application Instance ---
 app = FastAPI(
     title="AIBuddies API",
@@ -26,20 +29,36 @@ app.add_middleware(
 )
 # --- Startup Event Handler ---
 @app.on_event("startup")
-async def on_startup(): # <-- Make async
-    await create_database_and_tables() 
+async def on_startup():
+    print("--- Application Startup ---")
+    await create_database_and_tables()
+
+    # --- ADD THE PRINT LOGIC HERE ---
+    print("--- Discovered Agent Tools ---")
+    if not all_tools:
+        print("  - No tools found.")
+    else:
+        for t in all_tools:
+            print(f"  - {t.name}")
+    print("----------------------------")
+
+    
+    # print("Initializing memory manager components...")
+    # memory_manager._initialize_components()
+    
+    print("--- Startup Complete ---")
 
 # --- Include Routers ---
 app.include_router(tasks.router)
 app.include_router(notes.router)
 app.include_router(auth.router)
-app.include_router(calendar.router) # <-- NEW INCLUDE
-app.include_router(gmail.router)    # <-- NEW INCLUDE
+app.include_router(calendar.router)
+app.include_router(gmail.router)
 app.include_router(notifications.router)
 app.include_router(notes.router_tags)
 app.include_router(admin.router)
-app.include_router(agent.router)
-# --- Root Endpoint ---
+app.include_router(settings.router)
+
 @app.get("/", tags=["Root"])
 def read_root():
     return {"message": "Welcome to the AIBuddies API! Visit /docs for documentation."}

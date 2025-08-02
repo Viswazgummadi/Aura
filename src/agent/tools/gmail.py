@@ -4,7 +4,7 @@ import base64
 import email
 from email.mime.text import MIMEText
 from langchain_core.tools import tool
-from typing import List, Dict, Union
+from typing import List, Dict, Union, Optional
 from googleapiclient.errors import HttpError
 from src.database import crud, database
 from src.core.gcp_auth import build_google_service
@@ -14,19 +14,20 @@ from src.core.gcp_auth import build_google_service
 # ==============================================================================
 
 @tool
-def list_unread_emails(user_id: int, max_results: int = 10) -> Union[List[Dict], Dict]:
+def list_unread_emails(max_results: int = 10, **kwargs) -> Union[List[Dict], Dict]:
     """
     Lists the most recent unread emails from the user's inbox.
     Use this to get a quick summary of new emails. Returns a list of dictionaries.
     """
     try:
-        print("started just now")
+        user_id = kwargs.get("user_id")
+        if user_id is None:
+            raise ValueError("list_unread_emails tool was called without a user_id.")
+
         service = build_google_service('gmail', 'v1', user_id=user_id)
-        print("reached here")
         results = service.users().messages().list(
             userId='me', labelIds=['INBOX', 'UNREAD'], maxResults=max_results
         ).execute()
-        print("still here")
         messages = results.get('messages', [])
         email_data = []
         if not messages:
@@ -41,20 +42,22 @@ def list_unread_emails(user_id: int, max_results: int = 10) -> Union[List[Dict],
             
         return email_data
     except Exception as e:
-        # <-- CHANGED: Return a dictionary directly, not a list containing a dictionary.
         return {"error": f"An unexpected error occurred while listing unread emails: {e}"}
 
 @tool
-def get_email_body(user_id: int, message_id: str) -> Union[str, Dict]:
+def get_email_body(message_id: str, **kwargs) -> Union[str, Dict]:
     """
     Retrieves the full plain text body of a specific email by its ID.
     Use this after finding an important email with `list_unread_emails`.
     """
     try:
+        user_id = kwargs.get("user_id")
+        if user_id is None:
+            raise ValueError("get_email_body tool was called without a user_id.")
+
         service = build_google_service('gmail', 'v1', user_id=user_id)
         msg_raw = service.users().messages().get(userId='me', id=message_id, format='raw').execute()
         if 'raw' not in msg_raw:
-            # <-- CHANGED: Return a structured error dictionary.
             return {"error": "Could not retrieve raw content for this email."}
 
         msg_bytes = base64.urlsafe_b64decode(msg_raw['raw'].encode('ASCII'))
@@ -66,20 +69,21 @@ def get_email_body(user_id: int, message_id: str) -> Union[str, Dict]:
             if part.get_content_type() == 'text/plain':
                 return part.get_payload(decode=True).decode(part.get_content_charset() or 'utf-8', 'ignore')
 
-        # <-- CHANGED: Return a structured error dictionary.
         return {"error": "No plain text body found in the email."}
     except Exception as e:
-        # <-- CHANGED: Return a structured error dictionary.
         return {"error": f"An unexpected error occurred while getting email body: {e}"}
 
 @tool
-def send_email(user_id: int, to: str, subject: str, body: str) -> Dict:
+def send_email(to: str, subject: str, body: str, **kwargs) -> Dict:
     """
     Creates and sends a new email from the user's account.
     Returns a dictionary with the sent message details on success or an error.
     """
-    # This tool was already perfectly structured. No changes needed.
     try:
+        user_id = kwargs.get("user_id")
+        if user_id is None:
+            raise ValueError("send_email tool was called without a user_id.")
+
         service = build_google_service('gmail', 'v1', user_id=user_id)
         message = MIMEText(body)
         message['to'] = to
@@ -96,37 +100,36 @@ def send_email(user_id: int, to: str, subject: str, body: str) -> Dict:
         return {"error": f"An unexpected error occurred while sending email: {e}"}
 
 @tool
-def mark_email_as_read(user_id: int, message_id: str) -> Dict:
+def mark_email_as_read(message_id: str, **kwargs) -> Dict:
     """Marks a specific email as read by its ID."""
     try:
+        user_id = kwargs.get("user_id")
+        if user_id is None:
+            raise ValueError("mark_email_as_read tool was called without a user_id.")
+
         service = build_google_service('gmail', 'v1', user_id=user_id)
         service.users().messages().modify(
             userId='me', id=message_id, body={'removeLabelIds': ['UNREAD']}
         ).execute()
-        # <-- CHANGED: Return a structured success dictionary.
         return {"status": "success", "message": f"Message {message_id} marked as read."}
     except Exception as e:
-        # <-- CHANGED: Return a structured error dictionary.
         return {"error": f"Could not mark message {message_id} as read. {e}"}
 
 # ==============================================================================
 # === BACKGROUND PROCESSING FUNCTIONS (Not tools) ==============================
 # ==============================================================================
 
-# These functions were already well-structured and are not agent-facing tools.
-# No changes are needed below this line.
+# These functions are not agent-facing tools and should not be changed.
 def get_latest_history_id_from_gmail_api(user_id: int) -> int:
-    # ... (function is unchanged) ...
     try:
         service = build_google_service('gmail', 'v1', user_id=user_id)
         profile = service.users().getProfile(userId='me').execute()
         return int(profile.get('historyId', 0))
     except Exception as e:
         print(f"ERROR: Could not fetch latest history ID from Gmail profile API for user {user_id}: {e}")
-        return 0 
+        return 0
 
 def _get_message_metadata(message_id: str, service, user_id: int) -> dict | None:
-    # ... (function is unchanged) ...
     try:
         msg_metadata = service.users().messages().get(
             userId='me', id=message_id, format='metadata', metadataHeaders=['Subject', 'From', 'Delivered-To']
@@ -150,7 +153,6 @@ def _get_message_metadata(message_id: str, service, user_id: int) -> dict | None
         return None
 
 def fetch_new_messages_for_processing_from_api(user_id: int, start_history_id: int | None = None) -> tuple[list, int]:
-    # ... (function is unchanged) ...
     db = database.SessionLocal()
     try:
         service = build_google_service('gmail', 'v1', user_id=user_id)
@@ -200,12 +202,10 @@ def fetch_new_messages_for_processing_from_api(user_id: int, start_history_id: i
         db.close()
 
 def _fetch_messages_from_list_api(service, user_id: int, label_ids: list, max_results: int = 50) -> list:
-    # ... (function is unchanged) ...
     results = service.users().messages().list(userId='me', labelIds=label_ids, maxResults=max_results).execute()
     return results.get('messages', [])
 
 def _fetch_unread_and_get_history_id_fallback(service, user_id: int) -> tuple[list, int]:
-    # ... (function is unchanged) ...
     messages_to_process = []
     highest_history_id_in_fetch = 0
     unread_messages_list = _fetch_messages_from_list_api(service, user_id, label_ids=['INBOX', 'UNREAD'], max_results=50)
@@ -219,3 +219,10 @@ def _fetch_unread_and_get_history_id_fallback(service, user_id: int) -> tuple[li
         highest_history_id_in_fetch = get_latest_history_id_from_gmail_api(user_id=user_id)
     messages_to_process.sort(key=lambda x: (x['historyId'], x['id']))
     return messages_to_process, highest_history_id_in_fetch
+
+__tools__ = [
+    list_unread_emails,
+    get_email_body,
+    send_email,
+    mark_email_as_read
+]
